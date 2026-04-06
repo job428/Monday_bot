@@ -278,6 +278,13 @@ function adminLayout({ title, active, msg, body }) {
     .actions{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
     .backbtn{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;border:1px solid #ddd;background:#fff;color:#111;font-weight:900;text-decoration:none}
     .seg{display:flex;justify-content:center;gap:10px;margin:10px 0}
+
+    /* Segmented control (Today/Tomorrow) */
+    .segSwitch{display:flex;align-items:center;justify-content:space-between;gap:0; width:min(320px, 100%); background:#e6e6e6; border:1px solid #d0d0d0; border-radius:999px; padding:4px;}
+    .segBtn{flex:1; text-align:center; padding:10px 12px; border-radius:999px; font-weight:900; color:#111;}
+    .segBtn.on{background:#fff; box-shadow:0 2px 8px rgba(0,0,0,.12);}
+
+    /* legacy toggle (kept in case used elsewhere) */
     .toggle{position:relative;width:74px;height:36px;border-radius:999px;background:#ddd;border:1px solid #cfcfcf;cursor:pointer;display:inline-flex;align-items:center;padding:4px;}
     .toggle .knob{width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.18);transform:translateX(0);transition:transform 160ms ease;}
     .toggle.on{background:#111;border-color:#111;}
@@ -432,13 +439,11 @@ app.get('/admin/orders', async (req, res) => {
     <h2 style="margin:0 0 8px">จัดการออเดอร์</h2>
     <div class="muted">รายการออเดอร์ล่าสุด</div>
 
-    <div class="seg">
-      ${tabToggle('วันนี้','today', dateTab==='today')}
-      ${tabToggle('พรุ่งนี้','tomorrow', dateTab==='tomorrow')}
-    </div>
-    <div class="actions" style="justify-content:center;margin-top:-4px">
-      <span class="muted" style="width:74px;text-align:center">วันนี้</span>
-      <span class="muted" style="width:74px;text-align:center">พรุ่งนี้</span>
+    <div class="seg" style="justify-content:center">
+      <div class="segSwitch" role="group" aria-label="แสดงรายการตามวัน">
+        <a href="/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=today" class="segBtn ${dateTab==='today' ? 'on' : ''}" style="text-decoration:none">วันนี้</a>
+        <a href="/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=tomorrow" class="segBtn ${dateTab==='tomorrow' ? 'on' : ''}" style="text-decoration:none">พรุ่งนี้</a>
+      </div>
     </div>
 
     <div class="actions" style="margin-top:10px">
