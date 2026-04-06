@@ -447,57 +447,52 @@ app.get('/admin/orders', async (req, res) => {
     </div>
 
     <script>
-      // Swipe left/right to switch Today/Tomorrow (iPhone-style)
+      // Swipe left/right to switch Today/Tomorrow (จับท่าปัดได้แม้ปัดบนพื้นที่ด้านบน ไม่ใช่แค่ปุ่ม)
       (function(){
-        var sw = document.getElementById('dateSwitch');
-        if (!sw) return;
-        var x0 = null, y0 = null, tracking = false;
-        var TH = 50; // px
+        var active = ${JSON.stringify((dateTab==='tomorrow') ? 'tomorrow' : 'today')};
+        var base = '/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}';
 
-        function go(dir){
-          var url = null;
-          var isToday = ${dateTab==='today' ? 'true' : 'false'};
-          var isTomorrow = ${dateTab==='tomorrow' ? 'true' : 'false'};
-          if (dir === 'left') {
-            // today -> tomorrow
-            if (isToday && !isTomorrow) url = '/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=tomorrow';
-          } else {
-            // tomorrow -> today
-            if (isTomorrow) url = '/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=today';
-          }
-          if (url) location.href = url;
+        function go(next){
+          if (next === active) return;
+          location.href = base + '&date=' + encodeURIComponent(next);
         }
 
-        sw.addEventListener('touchstart', function(e){
+        var x0=null, y0=null;
+        document.addEventListener('touchstart', function(e){
           if (!e.touches || e.touches.length !== 1) return;
-          x0 = e.touches[0].clientX;
-          y0 = e.touches[0].clientY;
-          tracking = true;
-        }, { passive: true });
+          var t=e.touches[0];
+          // only if gesture starts near top area (avoid interfering with scrolling list)
+          if (t.clientY > 220) return;
+          x0=t.clientX; y0=t.clientY;
+        }, {passive:true});
 
-        sw.addEventListener('touchmove', function(e){
-          if (!tracking || x0 === null || y0 === null) return;
-          var dx = e.touches[0].clientX - x0;
-          var dy = e.touches[0].clientY - y0;
-          // only horizontal intent
-          if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+        document.addEventListener('touchmove', function(e){
+          if (x0==null||y0==null) return;
+          var t=e.touches[0];
+          var dx=t.clientX-x0;
+          var dy=t.clientY-y0;
+          if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
             if (e.cancelable) e.preventDefault();
           }
-        }, { passive: false });
+        }, {passive:false});
 
-        sw.addEventListener('touchend', function(e){
-          if (!tracking || x0 === null || y0 === null) return;
-          tracking = false;
-          var t = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
-          if (!t) return;
-          var dx = t.clientX - x0;
-          var dy = t.clientY - y0;
-          x0 = y0 = null;
-          if (Math.abs(dx) < TH) return;
+        document.addEventListener('touchend', function(e){
+          if (x0==null||y0==null) return;
+          var t=(e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
+          if (!t) { x0=y0=null; return; }
+          var dx=t.clientX-x0;
+          var dy=t.clientY-y0;
+          x0=y0=null;
+          if (Math.abs(dx) < 70) return;
           if (Math.abs(dx) < Math.abs(dy)) return;
-          if (dx < 0) go('left');
-          else go('right');
-        }, { passive: true });
+          if (dx < 0) {
+            // swipe left
+            if (active === 'today') go('tomorrow');
+          } else {
+            // swipe right
+            if (active === 'tomorrow') go('today');
+          }
+        }, {passive:true});
       })();
     </script>
 
