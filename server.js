@@ -440,11 +440,66 @@ app.get('/admin/orders', async (req, res) => {
     <div class="muted">รายการออเดอร์ล่าสุด</div>
 
     <div class="seg" style="justify-content:center">
-      <div class="segSwitch" role="group" aria-label="แสดงรายการตามวัน">
+      <div class="segSwitch" id="dateSwitch" role="group" aria-label="แสดงรายการตามวัน">
         <a href="/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=today" class="segBtn ${dateTab==='today' ? 'on' : ''}" style="text-decoration:none">วันนี้</a>
         <a href="/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=tomorrow" class="segBtn ${dateTab==='tomorrow' ? 'on' : ''}" style="text-decoration:none">พรุ่งนี้</a>
       </div>
     </div>
+
+    <script>
+      // Swipe left/right to switch Today/Tomorrow (iPhone-style)
+      (function(){
+        var sw = document.getElementById('dateSwitch');
+        if (!sw) return;
+        var x0 = null, y0 = null, tracking = false;
+        var TH = 50; // px
+
+        function go(dir){
+          var url = null;
+          var isToday = ${dateTab==='today' ? 'true' : 'false'};
+          var isTomorrow = ${dateTab==='tomorrow' ? 'true' : 'false'};
+          if (dir === 'left') {
+            // today -> tomorrow
+            if (isToday && !isTomorrow) url = '/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=tomorrow';
+          } else {
+            // tomorrow -> today
+            if (isTomorrow) url = '/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=today';
+          }
+          if (url) location.href = url;
+        }
+
+        sw.addEventListener('touchstart', function(e){
+          if (!e.touches || e.touches.length !== 1) return;
+          x0 = e.touches[0].clientX;
+          y0 = e.touches[0].clientY;
+          tracking = true;
+        }, { passive: true });
+
+        sw.addEventListener('touchmove', function(e){
+          if (!tracking || x0 === null || y0 === null) return;
+          var dx = e.touches[0].clientX - x0;
+          var dy = e.touches[0].clientY - y0;
+          // only horizontal intent
+          if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+            if (e.cancelable) e.preventDefault();
+          }
+        }, { passive: false });
+
+        sw.addEventListener('touchend', function(e){
+          if (!tracking || x0 === null || y0 === null) return;
+          tracking = false;
+          var t = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
+          if (!t) return;
+          var dx = t.clientX - x0;
+          var dy = t.clientY - y0;
+          x0 = y0 = null;
+          if (Math.abs(dx) < TH) return;
+          if (Math.abs(dx) < Math.abs(dy)) return;
+          if (dx < 0) go('left');
+          else go('right');
+        }, { passive: true });
+      })();
+    </script>
 
     <div class="actions" style="margin-top:10px">
       <a href="/admin/orders?token=${t}&status=new${dateTab?`&date=${encodeURIComponent(dateTab)}`:''}" class="${filterStatus==='new' ? 'pill' : 'muted'}" style="text-decoration:none">ออเดอร์ใหม่</a>
