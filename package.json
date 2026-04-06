@@ -1,0 +1,19 @@
+{
+  "name": "veg-order",
+  "version": "1.0.0",
+  "description": "Simple veg ordering web app (per-customer URL)",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "mysql2": "^3.20.0",
+    "nanoid": "^5.1.6"
+  }
+}

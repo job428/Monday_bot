@@ -1,0 +1,20 @@
+node_modules/
+run.log
+*.log
+.env
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# local data (keep DB in MySQL; these are leftovers)
+data/
+
+# optional
+*.bak
+
+# rebuild/backups
+server.js.new
+server.js.rebuild.js
+server.js.broken.*

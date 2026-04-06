@@ -1,0 +1,1712 @@
+/*
+  veg-order-app/server.js (rebuild)
+  Reconstructed after accidental overwrite. MySQL-backed.
+
+  IMPORTANT:
+  - Keep endpoints and UX compatible with previous iterations:
+    - Admin token auth via ?token=ADMIN_TOKEN
+    - Mobile-first admin pages (customers/veggies/orders/groups/delivery-times)
+    - Customer links: /c/:customerToken, Guest links: /g/:guestToken
+    - Orders stored in MySQL (veg_order)
+    - Print A6: /admin/order/print/:orderId
+
+  NOTE:
+  - This file is designed to be self-contained (no external templates).
+*/
+
+const express = require('express');
+const helmet = require('helmet');
+const mysql = require('mysql2/promise');
+const crypto = require('crypto');
+
+const app = express();
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(express.json({ limit: '400kb' }));
+app.use(express.urlencoded({ extended: true }));
+
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'change-me';
+
+const DB_HOST = process.env.DB_HOST || 'localhost';
+const DB_USER = process.env.DB_USER || 'veg_order_app';
+const DB_PASS = process.env.DB_PASS || '';
+const DB_NAME = process.env.DB_NAME || 'veg_order';
+
+// --- embedded assets ---
+// Keep logo route; if base64 missing, serve 404.
+let LOGO_PNG_BASE64 = '';
+
+// --- utils ---
+function stableId() {
+  return crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+}
+
+function nanoid(len = 10) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  let out = '';
+  const bytes = crypto.randomBytes(len);
+  for (let i = 0; i < len; i++) out += alphabet[bytes[i] % alphabet.length];
+  return out;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function bangkokYmd(d) {
+  // format date in Asia/Bangkok to YYYY-MM-DD
+  const dt = new Date(d);
+  // convert to +07 by adding offset diff
+  const utc = dt.getTime() + dt.getTimezoneOffset() * 60000;
+  const bkk = new Date(utc + 7 * 3600000);
+  const y = bkk.getFullYear();
+  const m = String(bkk.getMonth() + 1).padStart(2, '0');
+  const day = String(bkk.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function bangkokAddDaysYmd(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + Number(days || 0));
+  return bangkokYmd(d);
+}
+
+function redirectAdminTo(res, path, msg) {
+  const qs = new URLSearchParams({ token: ADMIN_TOKEN });
+  if (msg) qs.set('msg', String(msg));
+  res.redirect(`${path}${path.includes('?') ? '&' : '?'}${qs.toString()}`);
+}
+
+function requireAdmin(req, res) {
+  const t = String(req.query.token || '');
+  if (t !== String(ADMIN_TOKEN)) {
+    res.status(401).type('html').send('Unauthorized');
+    return false;
+  }
+  return true;
+}
+
+let _pool;
+async function db() {
+  if (_pool) return _pool;
+  _pool = mysql.createPool({
+    host: DB_HOST,
+    user: DB_USER,
+    password: DB_PASS,
+    database: DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    charset: 'utf8mb4'
+  });
+  return _pool;
+}
+
+// --- data access ---
+async function getDeliveryTimes() {
+  const p = await db();
+  const [rows] = await p.query('SELECT id,name,time_hm,days_mask,enabled FROM delivery_times ORDER BY id ASC');
+  return rows;
+}
+
+async function getAllCustomerGroups() {
+  const p = await db();
+  const [rows] = await p.query('SELECT id,name FROM customer_groups ORDER BY id ASC');
+  return rows;
+}
+
+async function getAllCustomers() {
+  const p = await db();
+  const [rows] = await p.query(
+    `SELECT c.token,c.label,c.note,c.enabled,c.group_id,c.use_group_price,c.default_delivery_time_id,
+            g.name AS group_name
+     FROM customers c
+     LEFT JOIN customer_groups g ON g.id=c.group_id
+     ORDER BY c.created_at DESC`
+  );
+  return rows;
+}
+
+async function getCustomerByToken(token) {
+  const p = await db();
+  const [rows] = await p.execute(
+    'SELECT token,label,note,enabled,group_id,use_group_price,default_delivery_time_id FROM customers WHERE token=? LIMIT 1',
+    [token]
+  );
+  return rows[0] || null;
+}
+
+async function getVeggies() {
+  const p = await db();
+  const [rows] = await p.query('SELECT id,name,unit,price,enabled,sort_order FROM veggies ORDER BY sort_order ASC, name ASC');
+  return rows.map(r => ({ ...r, price: Number(r.price || 0) }));
+}
+
+async function getVeggiesForCustomer(customerToken) {
+  const p = await db();
+  const [rows] = await p.execute(
+    `SELECT v.id, v.name, v.unit, v.price AS base_price,
+            cvp.price AS customer_price,
+            gvp.price AS group_price,
+            c.use_group_price,
+            v.enabled, v.sort_order
+     FROM veggies v
+     LEFT JOIN customers c ON c.token = ?
+     LEFT JOIN group_veg_prices gvp ON gvp.veg_id = v.id AND gvp.group_id = c.group_id
+     LEFT JOIN customer_veg_prices cvp ON cvp.veg_id = v.id AND cvp.customer_token = c.token
+     WHERE v.enabled = 1
+     ORDER BY v.sort_order ASC, v.name ASC`,
+    [customerToken]
+  );
+
+  return rows.map(r => {
+    const useGroup = Number(r.use_group_price || 0) === 1;
+    const groupPrice = r.group_price;
+    const customerPrice = r.customer_price;
+    const basePrice = r.base_price;
+    const finalPrice = (useGroup && groupPrice !== null && groupPrice !== undefined) ? groupPrice
+      : (customerPrice !== null && customerPrice !== undefined) ? customerPrice
+      : basePrice;
+    return {
+      id: r.id,
+      name: r.name,
+      unit: r.unit,
+      price: Number(finalPrice || 0),
+      enabled: r.enabled,
+      sort_order: r.sort_order
+    };
+  });
+}
+
+async function hydrateOrdersWithItems(p, orders) {
+  const ids = orders.map(o => o.order_id);
+  if (!ids.length) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const [items] = await p.query(
+    `SELECT id, order_id, veg_id, name_snapshot, unit_snapshot, price_snapshot, qty
+     FROM order_items
+     WHERE order_id IN (${placeholders})
+     ORDER BY id ASC`,
+    ids
+  );
+  const map = new Map();
+  for (const o of orders) map.set(o.order_id, { ...o, items: [] });
+  for (const it of items) {
+    const o = map.get(it.order_id);
+    if (o) o.items.push({
+      vegId: it.veg_id,
+      name: it.name_snapshot,
+      unit: it.unit_snapshot,
+      price: Number(it.price_snapshot || 0),
+      qty: Number(it.qty || 0)
+    });
+  }
+  return Array.from(map.values());
+}
+
+async function getOrders({ limit = 500, status = null, deliveryDate = null } = {}) {
+  const p = await db();
+  const limitInt = Math.max(1, Math.min(2000, parseInt(limit, 10) || 500));
+
+  const where = [];
+  const params = [];
+  if (status) { where.push('status = ?'); params.push(String(status)); }
+  if (deliveryDate) { where.push('delivery_date = ?'); params.push(String(deliveryDate).slice(0, 10)); }
+
+  const whereSql = where.length ? ('WHERE ' + where.join(' AND ')) : '';
+  const [orders] = await p.execute(
+    `SELECT order_id, customer_token, guest_token, guest_label, customer_label, created_at, user_agent, status,
+            delivery_date, delivery_time_id, delivery_time_name, delivery_time_hm
+     FROM orders
+     ${whereSql}
+     ORDER BY created_at DESC
+     LIMIT ${limitInt}`,
+    params
+  );
+  return hydrateOrdersWithItems(p, orders);
+}
+
+// --- layouts ---
+function adminNav(active) {
+  const t = encodeURIComponent(ADMIN_TOKEN);
+  const link = (href, label, key) => {
+    const is = active === key;
+    return `<a href="${href}?token=${t}" class="${is ? 'pill' : 'muted'}" style="text-decoration:none">${label}</a>`;
+  };
+  return `<div class="actions" style="margin:10px 0;justify-content:center">
+    ${link('/admin/orders', 'ออเดอร์', 'orders')}
+    ${link('/admin/customers', 'ลูกค้า', 'customers')}
+    ${link('/admin/veggies', 'ผัก', 'veggies')}
+    ${link('/admin/delivery-times', 'เวลาส่ง', 'delivery')}
+  </div>`;
+}
+
+function adminLayout({ title, active, msg, body }) {
+  return `<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="สั่งผัก" />
+  <style>
+    :root{--card:#e7e7e7;--muted:#666;--ink:#111;--danger:#b00020}
+    *{box-sizing:border-box}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto;max-width:1200px;margin:18px auto;padding:0 12px;line-height:1.35}
+    input,select,textarea{padding:10px 12px;border:1px solid #ddd;border-radius:12px;width:100%;font-size:18px}
+    button{padding:10px 12px;border-radius:12px;border:1px solid var(--ink);background:var(--ink);color:#fff;font-weight:700;cursor:pointer;font-size:15px}
+    button.secondary{background:#fff;color:var(--ink)}
+    button.danger{background:var(--danger);border-color:var(--danger)}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid #eee;padding:10px;vertical-align:top;text-align:left}
+    th{background:#fafafa;position:sticky;top:0}
+    code{background:#f2f2f2;padding:2px 6px;border-radius:8px;word-break:break-all}
+    .muted{color:var(--muted);font-size:12px}
+    .card{border:1px solid var(--card);border-radius:14px;padding:12px 14px;margin:12px 0}
+    .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#111;color:#fff;font-size:12px}
+    .row{display:grid;grid-template-columns: 1fr 1fr; gap:12px}
+    .row3{display:grid;grid-template-columns: 1fr 1fr 1fr; gap:12px}
+    .actions{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+    .backbtn{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;border:1px solid #ddd;background:#fff;color:#111;font-weight:900;text-decoration:none}
+    .seg{display:flex;justify-content:center;gap:10px;margin:10px 0}
+    .toggle{position:relative;width:74px;height:36px;border-radius:999px;background:#ddd;border:1px solid #cfcfcf;cursor:pointer;display:inline-flex;align-items:center;padding:4px;}
+    .toggle .knob{width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.18);transform:translateX(0);transition:transform 160ms ease;}
+    .toggle.on{background:#111;border-color:#111;}
+    .toggle.on .knob{transform:translateX(34px)}
+  </style>
+</head>
+<body>
+  <div class="actions" style="justify-content:space-between;align-items:center;margin:6px 0">
+    <button class="backbtn" type="button" onclick="(history.length>1)?history.back():location.href='/'">←</button>
+    <h1 style="margin:0;flex:1;text-align:center">${escapeHtml(title)}</h1>
+    <div style="width:44px"></div>
+  </div>
+  ${adminNav(active)}
+  ${msg ? `<div class="card"><b>${escapeHtml(msg)}</b></div>` : ''}
+  ${body}
+
+  <script>
+    // Pull-to-refresh (มือถือ: ลากลงเพื่อรีเฟรชเหมือน YouTube)
+    (function(){
+      var THRESH = 70;
+      var startY = null;
+      var pulling = false;
+      var armed = false;
+      var bar = null;
+      function ensureBar(){
+        if (bar) return bar;
+        bar = document.createElement('div');
+        bar.id='ptrBar';
+        bar.style.position='fixed';bar.style.left='0';bar.style.right='0';bar.style.top='0';
+        bar.style.height='48px';bar.style.display='flex';bar.style.alignItems='center';bar.style.justifyContent='center';
+        bar.style.background='#111';bar.style.color='#fff';bar.style.fontWeight='800';
+        bar.style.transform='translateY(-52px)';bar.style.transition='transform 160ms ease';
+        bar.style.zIndex='9999';
+        bar.textContent='ลากลงเพื่อรีเฟรช';
+        document.body.appendChild(bar);
+        return bar;
+      }
+      function setBar(y){
+        var b=ensureBar();
+        var t=Math.max(-52, Math.min(0, -52 + y));
+        b.style.transform='translateY('+t+'px)';
+        if (y>=THRESH){ b.textContent='ปล่อยเพื่อรีเฟรช'; armed=true; }
+        else { b.textContent='ลากลงเพื่อรีเฟรช'; armed=false; }
+      }
+      function hideBar(){ if(bar) bar.style.transform='translateY(-52px)'; }
+      document.addEventListener('touchstart', function(e){
+        if (e.touches && e.touches.length===1 && (window.scrollY||document.documentElement.scrollTop||0)<=0){
+          startY=e.touches[0].clientY; pulling=true;
+        } else { startY=null; pulling=false; }
+      }, {passive:true});
+      document.addEventListener('touchmove', function(e){
+        if(!pulling||startY==null) return;
+        var y=e.touches[0].clientY-startY;
+        if(y<=0) return;
+        if(e.cancelable) e.preventDefault();
+        setBar(Math.min(140,y));
+      }, {passive:false});
+      document.addEventListener('touchend', function(){
+        if(!pulling) return;
+        pulling=false;
+        if(armed){ if(bar) bar.textContent='กำลังรีเฟรช...'; setTimeout(function(){location.reload();},150); }
+        else hideBar();
+        startY=null;
+      }, {passive:true});
+    })();
+  </script>
+</body>
+</html>`;
+}
+
+// --- routes ---
+app.get('/healthz', (req, res) => res.json({ ok: true }));
+
+app.get('/manifest.webmanifest', (req, res) => {
+  res.type('application/manifest+json').send(JSON.stringify({
+    name: 'สั่งผัก',
+    short_name: 'สั่งผัก',
+    start_url: `/admin?token=${ADMIN_TOKEN}`,
+    display: 'standalone',
+    background_color: '#ffffff',
+    theme_color: '#111111',
+    icons: []
+  }));
+});
+
+app.get('/assets/logo.png', (req, res) => {
+  if (!LOGO_PNG_BASE64) return res.status(404).end();
+  res.type('image/png').send(Buffer.from(LOGO_PNG_BASE64, 'base64'));
+});
+
+// admin landing -> orders
+app.get('/admin', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const t = encodeURIComponent(ADMIN_TOKEN);
+  return res.redirect(`/admin/orders?token=${t}`);
+});
+
+// --- admin orders ---
+app.get('/admin/orders', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const status = (req.query.status || '').toString().trim();
+  const filterStatus = (status === 'new' || status === 'canceled' || status === 'sent') ? status : 'new';
+
+  const dateTab = (req.query.date || '').toString().trim();
+  const dateFilter = (dateTab === 'today') ? bangkokYmd(new Date()) : (dateTab === 'tomorrow') ? bangkokAddDaysYmd(1) : null;
+
+  const orders = await getOrders({ limit: 500, status: filterStatus, deliveryDate: dateFilter });
+
+  if (req.query.partial === '1' || req.get('x-partial') === '1') {
+    const partialHtml = orders.map(o => {
+      const rawLabel = String(o.customer_label || o.guest_label || 'ลูกค้า');
+      const label = escapeHtml(rawLabel.replace(/\s+\d{1,2}\/\d{1,2}\/\d{4}.*/,'').trim());
+      const items = (o.items || []);
+      const total = items.reduce((s,it)=> s + (Number(it.price||0)*Number(it.qty||0)), 0);
+      const st = String(o.status || 'new');
+      const stLabel = (st==='new'?'ใหม่':st==='sent'?'ส่งแล้ว':st==='canceled'?'ยกเลิก':st);
+      const stColor = (st==='new'?'#666':st==='sent'?'#6f42c1':st==='canceled'?'#b00020':'#666');
+      const dYmd = o.delivery_date ? String(o.delivery_date).slice(0,10) : '';
+      const today = bangkokYmd(new Date());
+      const dLabel = (dYmd===today)?'วันนี้':(dYmd===bangkokAddDaysYmd(1))?'วันพรุ่งนี้':'';
+      const deliveryShort = (o.delivery_time_name && dLabel) ? `${escapeHtml(o.delivery_time_name)} ${escapeHtml(dLabel)}` : '';
+
+      return `<div class="card" style="margin:12px 0">
+        <div class="actions" style="justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="actions" style="align-items:center">
+              <div><b>${label}</b></div>
+              <span class="pill" style="background:${stColor};color:#fff">${stLabel}</span>
+            </div>
+            <div class="muted">${deliveryShort || ''}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="muted">ยอดรวม</div>
+            <div style="font-size:18px;font-weight:800">${escapeHtml(total.toLocaleString('th-TH'))}</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    return res.type('text/html').send(partialHtml);
+  }
+
+  const t = encodeURIComponent(ADMIN_TOKEN);
+
+  function tabToggle(label, key, on) {
+    const href = `/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=${encodeURIComponent(key)}`;
+    return `<a href="${href}" class="toggle ${on?'on':''}" style="text-decoration:none" aria-label="${escapeHtml(label)}"><span class="knob"></span></a>`;
+  }
+
+  const body = `
+  <div class="card">
+    <h2 style="margin:0 0 8px">จัดการออเดอร์</h2>
+    <div class="muted">รายการออเดอร์ล่าสุด</div>
+
+    <div class="seg">
+      ${tabToggle('วันนี้','today', dateTab==='today')}
+      ${tabToggle('พรุ่งนี้','tomorrow', dateTab==='tomorrow')}
+    </div>
+    <div class="actions" style="justify-content:center;margin-top:-4px">
+      <span class="muted" style="width:74px;text-align:center">วันนี้</span>
+      <span class="muted" style="width:74px;text-align:center">พรุ่งนี้</span>
+    </div>
+
+    <div class="actions" style="margin-top:10px">
+      <a href="/admin/orders?token=${t}&status=new${dateTab?`&date=${encodeURIComponent(dateTab)}`:''}" class="${filterStatus==='new' ? 'pill' : 'muted'}" style="text-decoration:none">ออเดอร์ใหม่</a>
+      <a href="/admin/orders?token=${t}&status=sent${dateTab?`&date=${encodeURIComponent(dateTab)}`:''}" class="${filterStatus==='sent' ? 'pill' : 'muted'}" style="text-decoration:none">จัดส่งแล้ว</a>
+      <a href="/admin/orders?token=${t}&status=canceled${dateTab?`&date=${encodeURIComponent(dateTab)}`:''}" class="${filterStatus==='canceled' ? 'pill' : 'muted'}" style="text-decoration:none">ยกเลิก</a>
+    </div>
+  </div>
+
+  <div id="ordersRoot">
+    ${orders.map(o => {
+      const rawLabel = String(o.customer_label || o.guest_label || 'ลูกค้า');
+      const label = escapeHtml(rawLabel.replace(/\s+\d{1,2}\/\d{1,2}\/\d{4}.*/,'').trim());
+      const items = (o.items||[]);
+      const total = items.reduce((s,it)=> s + (Number(it.price||0)*Number(it.qty||0)), 0);
+      const st = String(o.status || 'new');
+      const stLabel = (st==='new'?'ใหม่':st==='sent'?'ส่งแล้ว':st==='canceled'?'ยกเลิก':st);
+      const stColor = (st==='new'?'#666':st==='sent'?'#6f42c1':st==='canceled'?'#b00020':'#666');
+      const dYmd = o.delivery_date ? String(o.delivery_date).slice(0,10) : '';
+      const today = bangkokYmd(new Date());
+      const dLabel = (dYmd===today)?'วันนี้':(dYmd===bangkokAddDaysYmd(1))?'วันพรุ่งนี้':'';
+      const deliveryShort = (o.delivery_time_name && dLabel) ? `${escapeHtml(o.delivery_time_name)} ${escapeHtml(dLabel)}` : '';
+
+      return `<div class="card" style="margin:12px 0">
+        <div class="actions" style="justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="actions" style="align-items:center">
+              <div><b>${label}</b></div>
+              <span class="pill" style="background:${stColor};color:#fff">${stLabel}</span>
+            </div>
+            <div class="muted">${deliveryShort}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="muted">ยอดรวม</div>
+            <div style="font-size:18px;font-weight:800">${escapeHtml(total.toLocaleString('th-TH'))}</div>
+          </div>
+        </div>
+        <div style="height:10px"></div>
+        <div>
+          ${items.map(it => `<div style="padding:8px 0;border-top:1px solid #f0f0f0"><b>${escapeHtml(it.name)}</b> <span class="muted">${escapeHtml(it.unit||'')}</span> <span style="float:right"><b>x${escapeHtml(it.qty)}</b></span></div>`).join('')}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+
+  res.type('html').send(adminLayout({ title: 'ออเดอร์', active: 'orders', msg: req.query.msg ? String(req.query.msg) : '', body }));
+});
+
+// --- customer order pages (minimal; full UX can be re-added) ---
+app.get('/c/:customerToken', async (req, res) => {
+  const customerToken = String(req.params.customerToken || '');
+  const customer = await getCustomerByToken(customerToken);
+  if (!customer || customer.enabled === 0) return res.status(404).type('html').send('ไม่พบหน้าลูกค้านี้ครับ');
+  const veggies = await getVeggiesForCustomer(customerToken);
+  const deliveryTimes = await getDeliveryTimes();
+
+  res.type('html').send(`<!doctype html><html lang="th"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>สั่งผัก</title>
+  <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto;max-width:860px;margin:18px auto;padding:0 12px} .card{border:1px solid #e7e7e7;border-radius:14px;padding:12px 14px;margin:12px 0} .muted{color:#666;font-size:12px} .row{display:flex;gap:10px;align-items:center;justify-content:space-between} button{padding:10px 12px;border-radius:12px;border:1px solid #111;background:#111;color:#fff;font-weight:700} input{padding:10px 12px;border-radius:12px;border:1px solid #ddd;width:70px;text-align:right}</style>
+  </head><body>
+  <div class="row"><button type="button" onclick="(history.length>1)?history.back():location.href='/'">←</button><b>สั่งผัก</b><span class="muted">${escapeHtml(customer.label||customerToken)}</span></div>
+  <div class="card">
+    <div class="muted">เลือกเวลาส่ง</div>
+    <select id="deliveryTimeId" style="width:100%;padding:10px 12px;border-radius:12px;border:1px solid #ddd;font-size:18px">
+      ${deliveryTimes.length ? deliveryTimes.map(dt => `<option value="${escapeHtml(dt.id)}" ${customer.default_delivery_time_id && Number(customer.default_delivery_time_id)===Number(dt.id) ? 'selected' : ''}>${escapeHtml(dt.name)} (${escapeHtml(dt.time_hm||'')})</option>`).join('') : '<option value="" disabled selected>ยังไม่ได้ตั้งเวลาส่ง</option>'}
+    </select>
+  </div>
+  <div class="card" id="list"></div>
+  <div class="card"><button id="btnSend">ส่งออเดอร์</button> <span class="muted" id="msg"></span></div>
+  <script>
+    const VEGS = ${JSON.stringify(veggies)};
+    const customerToken = ${JSON.stringify(customerToken)};
+    const list = document.getElementById('list');
+    const msg = document.getElementById('msg');
+    const dtEl = document.getElementById('deliveryTimeId');
+    const qty = {};
+    function render(){
+      list.innerHTML = VEGS.map(function(v){
+        return [
+          '<div class="row" style="padding:10px 0;border-top:1px solid #f0f0f0">',
+          '  <div>',
+          '    <div><b>' + String(v.name) + '</b> <span class="muted">' + String(v.unit||'') + '</span></div>',
+          '    <div class="muted">' + String(v.price||0) + ' บาท</div>',
+          '  </div>',
+          '  <input type="number" min="0" value="0" data-id="' + String(v.id) + '">',
+          '</div>'
+        ].join('');
+      }).join('');
+      list.querySelectorAll('input[data-id]').forEach(function(inp){
+        inp.addEventListener('input', function(){ qty[inp.dataset.id] = Number(inp.value||0); });
+      });
+    }
+    render();
+    document.getElementById('btnSend').addEventListener('click', async ()=>{
+      msg.textContent='';
+      const items = Object.entries(qty).filter(([,q])=>q>0).map(([vegId,qty])=>({vegId,qty}));
+      if(!items.length){ msg.textContent='ยังไม่ได้เลือกผักครับ'; return; }
+      const deliveryTimeId = Number(dtEl && dtEl.value || 0);
+      const r = await fetch('/api/order', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ customerToken, items, deliveryOffset:0, deliveryTimeId })});
+      const data = await r.json();
+      if(!r.ok){ msg.textContent=data.error||'ส่งไม่สำเร็จ'; return; }
+      msg.textContent='ส่งแล้ว: '+data.orderId;
+      setTimeout(()=>location.reload(), 800);
+    });
+  </script>
+  </body></html>`);
+});
+
+app.post('/api/order', async (req, res) => {
+  const { customerToken, guestToken, customerName, items, deliveryOffset, deliveryTimeId } = req.body || {};
+  if ((!customerToken || typeof customerToken !== 'string') && (!guestToken || typeof guestToken !== 'string')) {
+    return res.status(400).json({ error: 'ต้องมี customerToken หรือ guestToken ครับ' });
+  }
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items ว่างครับ' });
+
+  let customer = null;
+  if (customerToken) {
+    customer = await getCustomerByToken(customerToken);
+    if (!customer || customer.enabled === 0) return res.status(404).json({ error: 'ไม่พบหน้าลูกค้านี้ครับ' });
+  } else {
+    // guest flow not reconstructed here
+    return res.status(400).json({ error: 'guest flow ยังไม่พร้อมใน build นี้' });
+  }
+
+  const veggies = await getVeggiesForCustomer(customerToken);
+  const vegMap = new Map(veggies.map(v => [v.id, v]));
+  const normalized = [];
+  for (const it of items) {
+    const veg = vegMap.get(it.vegId);
+    const qty = Number(it.qty);
+    if (!veg) return res.status(400).json({ error: `ไม่รู้จักผัก: ${it.vegId}` });
+    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: `จำนวนไม่ถูกต้อง: ${veg.name}` });
+    normalized.push({ veg, qty });
+  }
+
+  const off = Number(deliveryOffset ?? 0);
+  if (![0,1,2,3].includes(off)) return res.status(400).json({ error: 'deliveryOffset ไม่ถูกต้องครับ' });
+
+  let dtId = Number(deliveryTimeId || 0);
+  if (!dtId && customer && customer.default_delivery_time_id) dtId = Number(customer.default_delivery_time_id);
+  if (!dtId) return res.status(400).json({ error: 'กรุณาเลือกเวลาส่งครับ' });
+
+  const dtList = await getDeliveryTimes();
+  const dt = dtList.find(x => Number(x.id) === dtId);
+  if (!dt) return res.status(400).json({ error: 'เวลาส่งไม่ถูกต้องครับ' });
+
+  const deliveryDate = off === 0 ? bangkokYmd(new Date()) : bangkokAddDaysYmd(off);
+  const orderId = stableId();
+  const createdAt = new Date();
+  const ua = req.get('user-agent') || '';
+
+  const p = await db();
+  const conn = await p.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.execute(
+      'INSERT INTO orders(order_id, customer_token, guest_token, guest_label, customer_label, created_at, user_agent, status, delivery_date, delivery_time_id, delivery_time_name, delivery_time_hm) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      [orderId, customerToken, null, null, customer.label || customerToken, createdAt, ua, 'new', deliveryDate, dtId, dt.name, dt.time_hm]
+    );
+    for (const it of normalized) {
+      await conn.execute(
+        'INSERT INTO order_items(order_id, veg_id, name_snapshot, unit_snapshot, price_snapshot, qty) VALUES (?,?,?,?,?,?)',
+        [orderId, it.veg.id, it.veg.name, it.veg.unit || '', Number(it.veg.price || 0), it.qty]
+      );
+    }
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    return res.status(500).json({ error: 'บันทึกออเดอร์ไม่สำเร็จ' });
+  } finally {
+    conn.release();
+  }
+
+  return res.json({ ok: true, orderId });
+});
+
+
+
+
+
+// --- admin customers ---
+app.get('/admin/customers', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const groups = await getAllCustomerGroups();
+  const customers = await getAllCustomers();
+  const p = await db();
+  const [deliveryTimes] = await p.query('SELECT id,name,time_hm FROM delivery_times ORDER BY id ASC');
+
+  const groupOptions = ['<option value="">(ไม่จัดกลุ่ม)</option>'].concat(
+    groups.map(g => `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}</option>`)
+  ).join('');
+
+  const deliveryOptions = ['<option value="">(ไม่ตั้งค่า)</option>'].concat(
+    deliveryTimes.map(d => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}${d.time_hm ? ' ('+escapeHtml(d.time_hm)+')' : ''}</option>`)
+  ).join('');
+
+  const msg = req.query.msg ? String(req.query.msg) : '';
+  const t = encodeURIComponent(ADMIN_TOKEN);
+
+  const body = `
+  <div class="card">
+    <h2 style="margin:0 0 8px">จัดการลูกค้า</h2>
+    <div class="muted">เพิ่ม/แก้ไข/ลบลูกค้า + คัดลอกลิงก์สั่งผัก</div>
+
+    <div class="actions" style="margin:18px 0 8px;justify-content:space-between">
+      <h3 style="margin:0">ลูกค้า</h3>
+      <button type="button" id="btnNewCustomer">+ เพิ่มลูกค้าใหม่</button>
+    </div>
+
+    <dialog id="dlgNewCustomer" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+      <form method="post" action="/admin/customer/create?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">เพิ่มลูกค้าใหม่</h3>
+          <button type="button" class="secondary" id="btnCloseNewCustomer">ปิด</button>
+        </div>
+        <div class="muted" style="margin-top:6px">ปล่อย token ว่างได้ ระบบจะสุ่มให้ครับ</div>
+        <div style="height:12px"></div>
+
+        <div class="row3">
+          <div>
+            <div class="muted">token</div>
+            <input name="customerToken" placeholder="เช่น aom_01" />
+          </div>
+          <div>
+            <div class="muted">ชื่อที่แสดง (label)</div>
+            <input name="label" placeholder="เช่น คุณอ้อม" required />
+          </div>
+          <div>
+            <div class="muted">กลุ่ม</div>
+            <select name="group_id">${groupOptions}</select>
+          </div>
+        </div>
+
+        <div style="height:10px"></div>
+        <div>
+          <div class="muted">หมายเหตุ</div>
+          <input name="note" placeholder="เช่น ส่งของช่วงเย็น" />
+        </div>
+
+        <div style="height:10px"></div>
+        <div>
+          <div class="muted">เวลาส่งเริ่มต้น (default)</div>
+          <select name="default_delivery_time_id">${deliveryOptions}</select>
+        </div>
+
+        <div style="height:14px"></div>
+        <div class="actions" style="justify-content:flex-end">
+          <button type="button" class="secondary" id="btnCancelNewCustomer">ยกเลิก</button>
+          <button type="submit">เพิ่มลูกค้า</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlgEditCustomer" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+      <form method="post" action="/admin/customer/update?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+        <input type="hidden" name="customerToken" id="edit_customerToken" />
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">แก้ไขลูกค้า</h3>
+          <button type="button" class="secondary" id="btnCloseEditCustomer">ปิด</button>
+        </div>
+        <div class="muted" id="edit_token_show" style="margin-top:6px"></div>
+        <div style="height:12px"></div>
+
+        <div class="row3">
+          <div>
+            <div class="muted">ชื่อที่แสดง (label)</div>
+            <input name="label" id="edit_label" required />
+          </div>
+          <div>
+            <div class="muted">กลุ่ม</div>
+            <select name="group_id" id="edit_group">${groupOptions}</select>
+          </div>
+          <div>
+            <div class="muted">เปิดใช้งาน</div>
+            <select name="enabled" id="edit_enabled">
+              <option value="1">on</option>
+              <option value="0">off</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="height:10px"></div>
+        <div>
+          <div class="muted">หมายเหตุ</div>
+          <input name="note" id="edit_note" />
+        </div>
+
+        <div style="height:10px"></div>
+        <div>
+          <div class="muted">เวลาส่งเริ่มต้น (default)</div>
+          <select name="default_delivery_time_id" id="edit_default_delivery_time">${deliveryOptions}</select>
+        </div>
+
+        <div style="height:14px"></div>
+        <div class="actions" style="justify-content:flex-end">
+          <button type="button" class="secondary" id="btnCancelEditCustomer">ยกเลิก</button>
+          <button type="submit">บันทึก</button>
+        </div>
+      </form>
+    </dialog>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ลูกค้า</th>
+          <th>กลุ่ม</th>
+          <th>เวลาส่งเริ่มต้น</th>
+          <th>การจัดการ</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${customers.map(c => {
+          const link = `${BASE_URL}/c/${c.token}`;
+          const groupName = c.group_name ? escapeHtml(c.group_name) : '-';
+          const dt = deliveryTimes.find(x => Number(x.id) === Number(c.default_delivery_time_id||0));
+          const dtLabel = dt ? `${escapeHtml(dt.name)}${dt.time_hm ? ' ('+escapeHtml(dt.time_hm)+')' : ''}` : '-';
+          const disabledBadge = c.enabled ? '' : '<span class="pill" style="background:#f2f2f2;color:#111">disabled</span>';
+          return `
+          <tr>
+            <td><b>${escapeHtml(c.label)}</b> ${disabledBadge}<div class="muted">${escapeHtml(c.token)}</div></td>
+            <td>${groupName}</td>
+            <td>${dtLabel}</td>
+            <td>
+              <div class="actions" style="justify-content:flex-end">
+                <a class="muted" href="${escapeHtml(link)}" target="_blank" rel="noopener" style="padding:10px 12px;border-radius:12px;border:1px solid #ddd;text-decoration:none">เปิดลิงก์</a>
+                <button type="button" class="secondary" onclick="window.copyText && window.copyText('${escapeHtml(link)}').then(ok=>{ if(ok) alert('คัดลอกลิงก์แล้ว'); })">คัดลอกลิงก์</button>
+                <a class="muted" href="/admin/customer-prices?token=${escapeHtml(ADMIN_TOKEN)}&customerToken=${escapeHtml(c.token)}" style="padding:10px 12px;border-radius:12px;border:1px solid #ddd;text-decoration:none">ตั้งราคา</a>
+                <button type="button" class="secondary" onclick="openEditCustomer(${escapeHtml(JSON.stringify(c.token))}, ${escapeHtml(JSON.stringify(c.label))}, ${escapeHtml(JSON.stringify(c.note||''))}, ${escapeHtml(JSON.stringify(c.group_id||''))}, ${c.enabled ? '1':'0'}, ${c.use_group_price ? '1':'0'}, ${c.default_delivery_time_id ? JSON.stringify(c.default_delivery_time_id) : 'null'})">แก้ไข</button>
+                <form method="post" action="/admin/customer/delete?token=${escapeHtml(ADMIN_TOKEN)}" onsubmit="return confirm('ลบลูกค้าคนนี้?')" style="margin:0">
+                  <input type="hidden" name="customerToken" value="${escapeHtml(c.token)}" />
+                  <button type="submit" class="danger">ลบ</button>
+                </form>
+              </div>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+
+    <script>
+      (function(){
+        var btn = document.getElementById('btnNewCustomer');
+        var dlg = document.getElementById('dlgNewCustomer');
+        var close1 = document.getElementById('btnCloseNewCustomer');
+        var close2 = document.getElementById('btnCancelNewCustomer');
+        if(btn && dlg){
+          function openDlg(){ if(dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','open'); }
+          function closeDlg(){ if(dlg.close) dlg.close(); else dlg.removeAttribute('open'); }
+          btn.addEventListener('click', openDlg);
+          if(close1) close1.addEventListener('click', closeDlg);
+          if(close2) close2.addEventListener('click', closeDlg);
+        }
+
+        var dlg2 = document.getElementById('dlgEditCustomer');
+        var closeE1 = document.getElementById('btnCloseEditCustomer');
+        var closeE2 = document.getElementById('btnCancelEditCustomer');
+        var elTok = document.getElementById('edit_customerToken');
+        var elShow = document.getElementById('edit_token_show');
+        var elLabel = document.getElementById('edit_label');
+        var elNote = document.getElementById('edit_note');
+        var elGroup = document.getElementById('edit_group');
+        var elEnabled = document.getElementById('edit_enabled');
+        var elDefault = document.getElementById('edit_default_delivery_time');
+
+        function openEDlg(){ if(dlg2 && dlg2.showModal) dlg2.showModal(); else if(dlg2) dlg2.setAttribute('open','open'); }
+        function closeEDlg(){ if(dlg2 && dlg2.close) dlg2.close(); else if(dlg2) dlg2.removeAttribute('open'); }
+
+        window.openEditCustomer = function(token, label, note, groupId, enabled, useGroupPrice, defaultDeliveryTimeId){
+          elTok.value = token;
+          elShow.textContent = 'token: ' + token;
+          elLabel.value = label || '';
+          elNote.value = note || '';
+          elEnabled.value = String(enabled||'1');
+          elGroup.value = (groupId===null||groupId===undefined)?'':String(groupId);
+          if (elDefault) elDefault.value = (defaultDeliveryTimeId===null||defaultDeliveryTimeId===undefined)?'':String(defaultDeliveryTimeId);
+          openEDlg();
+        };
+
+        if(closeE1) closeE1.addEventListener('click', closeEDlg);
+        if(closeE2) closeE2.addEventListener('click', closeEDlg);
+      })();
+    </script>
+  </div>
+  `;
+
+  res.type('html').send(adminLayout({ title: 'ลูกค้า', active: 'customers', msg, body }));
+});
+
+app.post('/admin/customer/create', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  let { customerToken, label, note, enabled, group_id, use_group_price, default_delivery_time_id } = req.body || {};
+  const useGroup = String(use_group_price) === '1' ? 1 : 0;
+  const defaultDtId = default_delivery_time_id ? Number(default_delivery_time_id) : null;
+
+  customerToken = String(customerToken || '').trim();
+  label = String(label || '').trim();
+  note = String(note || '').trim();
+  enabled = String(enabled) === '0' ? 0 : 1;
+  const gid = group_id ? Number(group_id) : null;
+
+  if (!label) return redirectAdminTo(res, '/admin/customers', 'label หาย');
+  if (!customerToken) customerToken = nanoid(10);
+
+  const p = await db();
+  try {
+    await p.execute(
+      'INSERT INTO customers(token,label,note,enabled,group_id,use_group_price,default_delivery_time_id) VALUES (?,?,?,?,?,?,?)',
+      [customerToken, label, note, enabled, gid, useGroup, defaultDtId]
+    );
+  } catch (e) {
+    console.error(e);
+    return redirectAdminTo(res, '/admin/customers', 'เพิ่มลูกค้าไม่สำเร็จ (token ซ้ำ?)');
+  }
+  return redirectAdminTo(res, '/admin/customers', 'เพิ่มลูกค้าแล้ว');
+});
+
+app.post('/admin/customer/update', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { customerToken, label, note, enabled, group_id, use_group_price, default_delivery_time_id } = req.body || {};
+  const useGroup = String(use_group_price) === '1' ? 1 : 0;
+  const defaultDtId = default_delivery_time_id ? Number(default_delivery_time_id) : null;
+
+  const tok = String(customerToken || '').trim();
+  if (!tok) return redirectAdminTo(res, '/admin/customers', 'token หาย');
+
+  const p = await db();
+  await p.execute(
+    'UPDATE customers SET label=?, note=?, enabled=?, group_id=?, use_group_price=?, default_delivery_time_id=? WHERE token=?',
+    [String(label||'').trim(), String(note||'').trim(), String(enabled)==='0'?0:1, group_id?Number(group_id):null, useGroup, defaultDtId, tok]
+  );
+  return redirectAdminTo(res, '/admin/customers', 'บันทึกแล้ว');
+});
+
+
+// --- admin veggies ---
+app.get('/admin/veggies', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const veggies = await getVeggies();
+  const msg = req.query.msg ? String(req.query.msg) : '';
+  const t = encodeURIComponent(ADMIN_TOKEN);
+
+  const body = `
+  <div class="card">
+    <div class="actions" style="justify-content:space-between;align-items:center">
+      <div>
+        <h2 style="margin:0">จัดการผัก</h2>
+        <div class="muted">เพิ่ม/แก้ไข/ลบผัก</div>
+      </div>
+      <button type="button" id="btnNewVeg">+ เพิ่มผัก</button>
+    </div>
+
+    <dialog id="dlgNewVeg" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+      <form method="post" action="/admin/veg/create?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">เพิ่มผักใหม่</h3>
+          <button type="button" class="secondary" id="btnCloseNewVeg">ปิด</button>
+        </div>
+        <div style="height:12px"></div>
+
+        <div class="row3">
+          <div>
+            <div class="muted">id (ระบบจะสร้างให้)</div>
+            <input name="id" id="newVegId" readonly />
+          </div>
+          <div>
+            <div class="muted">ชื่อ</div>
+            <input name="name" id="newVegName" required />
+          </div>
+          <div>
+            <div class="muted">หน่วย</div>
+            <input name="unit" placeholder="กำ/หัว/กก" />
+          </div>
+        </div>
+
+        <div style="height:10px"></div>
+        <div class="row3">
+          <div>
+            <div class="muted">ราคา</div>
+            <input name="price" type="number" step="0.01" required />
+          </div>
+          <div>
+            <div class="muted">sort_order</div>
+            <input name="sort_order" type="number" step="1" value="0" />
+          </div>
+          <div>
+            <div class="muted">เปิดใช้งาน</div>
+            <select name="enabled">
+              <option value="1" selected>ใช่</option>
+              <option value="0">ไม่</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="height:14px"></div>
+        <div class="actions" style="justify-content:flex-end">
+          <button type="button" class="secondary" id="btnCancelNewVeg">ยกเลิก</button>
+          <button type="submit">เพิ่มผัก</button>
+        </div>
+      </form>
+    </dialog>
+
+    <table class="veg-table">
+      <thead>
+        <tr>
+          <th>ผัก</th>
+          <th>ราคา</th>
+          <th>เปิด</th>
+          <th>จัดการ</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${veggies.map(v => {
+          return `
+          <tr>
+            <td>
+              <div><b>${escapeHtml(v.name)}</b> <span class="muted">${escapeHtml(v.unit||'')}</span></div>
+              <div class="muted">id: ${escapeHtml(v.id)}</div>
+            </td>
+            <td class="right"><b>${escapeHtml(Number(v.price||0).toLocaleString('th-TH'))}</b></td>
+            <td>${v.enabled ? 'on' : 'off'}</td>
+            <td class="actions-cell">
+              <div class="actions" style="justify-content:flex-end">
+                <button type="button" class="secondary" onclick="openEditVeg(${escapeHtml(JSON.stringify(v.id))}, ${escapeHtml(JSON.stringify(v.name))}, ${escapeHtml(JSON.stringify(v.unit||''))}, ${escapeHtml(JSON.stringify(String(v.price||0)))}, ${escapeHtml(JSON.stringify(String(v.sort_order||0)))}, ${v.enabled?1:0})">แก้ไข</button>
+                <form method="post" action="/admin/veg/delete?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0" onsubmit="return confirm('ลบผักนี้?')">
+                  <input type="hidden" name="id" value="${escapeHtml(v.id)}" />
+                  <button type="submit" class="danger">ลบ</button>
+                </form>
+              </div>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+
+    <dialog id="dlgEditVeg" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+      <form method="post" action="/admin/veg/update?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+        <input type="hidden" name="id" id="editVegId" />
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">แก้ไขผัก</h3>
+          <button type="button" class="secondary" id="btnCloseEditVeg">ปิด</button>
+        </div>
+        <div class="muted" id="editVegIdShow" style="margin-top:6px"></div>
+        <div style="height:12px"></div>
+
+        <div class="row3">
+          <div>
+            <div class="muted">ชื่อ</div>
+            <input name="name" id="editVegName" required />
+          </div>
+          <div>
+            <div class="muted">หน่วย</div>
+            <input name="unit" id="editVegUnit" />
+          </div>
+          <div>
+            <div class="muted">ราคา</div>
+            <input name="price" id="editVegPrice" type="number" step="0.01" required />
+          </div>
+        </div>
+
+        <div style="height:10px"></div>
+        <div class="row3">
+          <div>
+            <div class="muted">sort_order</div>
+            <input name="sort_order" id="editVegSort" type="number" step="1" />
+          </div>
+          <div>
+            <div class="muted">เปิดใช้งาน</div>
+            <select name="enabled" id="editVegEnabled">
+              <option value="1">ใช่</option>
+              <option value="0">ไม่</option>
+            </select>
+          </div>
+          <div></div>
+        </div>
+
+        <div style="height:14px"></div>
+        <div class="actions" style="justify-content:flex-end">
+          <button type="button" class="secondary" id="btnCancelEditVeg">ยกเลิก</button>
+          <button type="submit">บันทึก</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script>
+      (function(){
+        function slugify(s){
+          return String(s||'').trim().toLowerCase()
+            .replace(/\s+/g,'_')
+            .replace(/[^a-z0-9_]+/g,'')
+            .replace(/_+/g,'_')
+            .replace(/^_+|_+$/g,'');
+        }
+        function genId(){ return 'veg_' + Math.random().toString(36).slice(2,6); }
+
+        var btn = document.getElementById('btnNewVeg');
+        var dlg = document.getElementById('dlgNewVeg');
+        var close1 = document.getElementById('btnCloseNewVeg');
+        var close2 = document.getElementById('btnCancelNewVeg');
+        if(btn && dlg){
+          function openDlg(){
+            if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','open');
+            var idEl = document.getElementById('newVegId');
+            var nameEl = document.getElementById('newVegName');
+            if (idEl) idEl.value = genId();
+            if (nameEl) {
+              nameEl.value=''; nameEl.focus();
+              nameEl.oninput = function(){
+                var slug = slugify(nameEl.value);
+                if (slug && idEl) idEl.value = slug;
+              };
+            }
+          }
+          function closeDlg(){ if (dlg.close) dlg.close(); else dlg.removeAttribute('open'); }
+          btn.addEventListener('click', openDlg);
+          if(close1) close1.addEventListener('click', closeDlg);
+          if(close2) close2.addEventListener('click', closeDlg);
+        }
+
+        var dlgE = document.getElementById('dlgEditVeg');
+        var closeE1 = document.getElementById('btnCloseEditVeg');
+        var closeE2 = document.getElementById('btnCancelEditVeg');
+        var elId = document.getElementById('editVegId');
+        var elShow = document.getElementById('editVegIdShow');
+        var elName = document.getElementById('editVegName');
+        var elUnit = document.getElementById('editVegUnit');
+        var elPrice = document.getElementById('editVegPrice');
+        var elSort = document.getElementById('editVegSort');
+        var elEn = document.getElementById('editVegEnabled');
+
+        window.openEditVeg = function(id,name,unit,price,sortOrder,enabled){
+          if(!dlgE) return;
+          elId.value=id;
+          elShow.textContent='id: '+id;
+          elName.value=name||'';
+          elUnit.value=unit||'';
+          elPrice.value=price||'';
+          elSort.value=sortOrder||'0';
+          elEn.value=String(enabled||1);
+          if(dlgE.showModal) dlgE.showModal(); else dlgE.setAttribute('open','open');
+        };
+        function closeEDlg(){ if(dlgE && dlgE.close) dlgE.close(); else if(dlgE) dlgE.removeAttribute('open'); }
+        if(closeE1) closeE1.addEventListener('click', closeEDlg);
+        if(closeE2) closeE2.addEventListener('click', closeEDlg);
+      })();
+    </script>
+  </div>
+  `;
+
+  res.type('html').send(adminLayout({ title: 'ผัก', active: 'veggies', msg, body }));
+});
+
+app.post('/admin/veg/create', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  let { id, name, unit, price, enabled, sort_order } = req.body || {};
+  id = String(id||'').trim();
+  name = String(name||'').trim();
+  unit = String(unit||'').trim();
+  const p1 = Number(price||0);
+  const en = String(enabled)==='0'?0:1;
+  const so = Number(sort_order||0);
+  if(!id) return redirectAdminTo(res,'/admin/veggies','id หาย');
+  if(!name) return redirectAdminTo(res,'/admin/veggies','name หาย');
+  const p = await db();
+  try{
+    await p.execute('INSERT INTO veggies(id,name,unit,price,enabled,sort_order) VALUES (?,?,?,?,?,?)', [id,name,unit,p1,en,so]);
+  }catch(e){
+    console.error(e);
+    return redirectAdminTo(res,'/admin/veggies','เพิ่มผักไม่สำเร็จ (id ซ้ำ?)');
+  }
+  return redirectAdminTo(res,'/admin/veggies','เพิ่มผักแล้ว');
+});
+
+app.post('/admin/veg/update', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  let { id, name, unit, price, enabled, sort_order } = req.body || {};
+  id = String(id||'').trim();
+  if(!id) return redirectAdminTo(res,'/admin/veggies','id หาย');
+  name = String(name||'').trim();
+  unit = String(unit||'').trim();
+  const p1 = Number(price||0);
+  const en = String(enabled)==='0'?0:1;
+  const so = Number(sort_order||0);
+  const p = await db();
+  await p.execute('UPDATE veggies SET name=?, unit=?, price=?, enabled=?, sort_order=? WHERE id=?', [name,unit,p1,en,so,id]);
+  return redirectAdminTo(res,'/admin/veggies','บันทึกแล้ว');
+});
+
+app.post('/admin/veg/delete', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const id = String((req.body && req.body.id) || '').trim();
+  if(!id) return redirectAdminTo(res,'/admin/veggies','id หาย');
+  const p = await db();
+  await p.execute('DELETE FROM veggies WHERE id=?', [id]);
+  return redirectAdminTo(res,'/admin/veggies','ลบแล้ว');
+});
+
+// ---- restored route snippets ----
+
+
+// SNIP: admin_groups_routes.txt
+app.get('/admin/groups', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const groups = await getAllCustomerGroups();
+  const msg = req.query.msg ? String(req.query.msg) : '';
+
+  const body = `
+  <div class="card">
+    <h2 style="margin:0 0 8px">จัดการกลุ่มลูกค้า</h2>
+    <div class="muted">เพิ่ม/แก้ไข/ลบกลุ่ม (ลบกลุ่มแล้ว ลูกค้าในกลุ่มจะถูกย้ายเป็นไม่จัดกลุ่มอัตโนมัติ)</div>
+
+    <h3 style="margin:14px 0 8px">เพิ่มกลุ่มใหม่</h3>
+    <form method="post" action="/admin/group/create?token=${escapeHtml(ADMIN_TOKEN)}" class="actions">
+      <input name="name" placeholder="เช่น ตลาดธิดาพร" required />
+      <button type="submit">เพิ่มกลุ่ม</button>
+    </form>
+
+    <h3 style="margin:18px 0 8px">รายการกลุ่ม</h3>
+    <table>
+      <thead><tr><th>กลุ่ม</th><th>จัดการ</th></tr></thead>
+      <tbody>
+        ${groups.map(g => `
+          <tr>
+            <td><b>${escapeHtml(g.name)}</b><div class="muted">id: ${escapeHtml(g.id)}</div></td>
+            <td>
+              <form method="post" action="/admin/group/update?token=${escapeHtml(ADMIN_TOKEN)}" class="actions">
+                <input type="hidden" name="id" value="${escapeHtml(g.id)}" />
+                <input name="name" value="${escapeHtml(g.name)}" />
+                <button type="submit">บันทึก</button>
+              </form>
+              <div style="height:6px"></div>
+              <form method="post" action="/admin/group/delete?token=${escapeHtml(ADMIN_TOKEN)}" onsubmit="return confirm('ลบกลุ่มนี้? ลูกค้าในกลุ่มจะถูกย้ายเป็นไม่จัดกลุ่ม')">
+                <input type="hidden" name="id" value="${escapeHtml(g.id)}" />
+                <button type="submit" class="danger">ลบกลุ่ม</button>
+              </form>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  </div>
+  `;
+
+  res.type('html').send(adminLayout({ title: 'จัดการกลุ่มลูกค้า', active: 'groups', msg, body }));
+});
+
+
+
+// SNIP: admin_group_prices_routes.txt
+app.get('/admin/group-prices', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const groupId = Number(req.query.groupId || 0);
+  if (!groupId) return redirectAdminTo(res, '/admin/groups', 'groupId หาย');
+
+  const p = await db();
+  const [groups] = await p.execute('SELECT id,name FROM customer_groups WHERE id=? LIMIT 1', [groupId]);
+  const g = groups[0];
+  if (!g) return redirectAdminTo(res, '/admin/groups', 'ไม่พบกลุ่มนี้');
+
+  const [vegs] = await p.query('SELECT id,name,unit,price FROM veggies WHERE enabled=1 ORDER BY sort_order ASC, name ASC');
+  const [over] = await p.execute('SELECT veg_id, price FROM group_veg_prices WHERE group_id=?', [groupId]);
+  const map = new Map(over.map(r => [r.veg_id, Number(r.price)]));
+  const msg = req.query.msg ? String(req.query.msg) : '';
+
+  const body = `
+  <div class="card">
+    <h2 style="margin:0 0 8px">ตั้งราคารายกลุ่ม</h2>
+    <div class="muted">กลุ่ม: <b>${escapeHtml(g.name)}</b></div>
+    <div class="muted">ถ้าไม่กรอกราคา จะใช้ (ถ้าลูกค้าไม่ตั้งราคาเอง) → ราคากลาง</div>
+
+    <div style="height:12px"></div>
+    <form method="post" action="/admin/group-prices/save?token=${escapeHtml(ADMIN_TOKEN)}">
+      <input type="hidden" name="groupId" value="${escapeHtml(groupId)}" />
+
+      <table>
+        <thead>
+          <tr>
+            <th>ผัก</th>
+            <th>ราคากลาง</th>
+            <th>ราคากลุ่ม</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${vegs.map(v => {
+            const base = Number(v.price || 0);
+            const cur = map.has(v.id) ? map.get(v.id) : '';
+            return `
+              <tr>
+                <td><b>${escapeHtml(v.name)}</b> <span class="muted">${escapeHtml(v.unit || '')}</span></td>
+                <td class="right">${escapeHtml(base.toLocaleString('th-TH'))}</td>
+                <td>
+                  <input name="price_${escapeHtml(v.id)}" type="number" step="0.01" placeholder="(ว่าง = ไม่ตั้ง)" value="${cur === '' ? '' : escapeHtml(cur)}" />
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+
+      <div style="height:12px"></div>
+      <div class="actions" style="justify-content:flex-end">
+        <button type="submit">บันทึก</button>
+      </div>
+    </form>
+  </div>
+  `;
+
+  res.type('html').send(adminLayout({ title: 'ตั้งราคารายกลุ่ม', active: 'groups', msg, body }));
+});
+
+app.post('/admin/group-prices/save', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const groupId = Number((req.body && req.body.groupId) || 0);
+  if (!groupId) return redirectAdminTo(res, '/admin/groups', 'groupId หาย');
+
+  const p = await db();
+  const [vegs] = await p.query('SELECT id FROM veggies WHERE enabled=1');
+
+  const conn = await p.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    for (const v of vegs) {
+      const key = 'price_' + v.id;
+      const raw = (req.body && req.body[key])
+        ? String(req.body[key]).trim()
+        : '';
+      if (!raw) {
+        await conn.execute('DELETE FROM group_veg_prices WHERE group_id=? AND veg_id=?', [groupId, v.id]);
+      } else {
+        const price = Number(raw);
+        if (!Number.isFinite(price) || price < 0) continue;
+        await conn.execute(
+          'INSERT INTO group_veg_prices(group_id, veg_id, price) VALUES (?,?,?) ON DUPLICATE KEY UPDATE price=VALUES(price)',
+          [groupId, v.id, price]
+        );
+      }
+    }
+
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    return redirectAdminTo(res, '/admin/groups', 'บันทึกราคาไม่สำเร็จ');
+  } finally {
+    conn.release();
+  }
+
+  const qs = new URLSearchParams({ token: ADMIN_TOKEN, groupId: String(groupId) });
+  return res.redirect('/admin/group-prices?' + qs.toString() + '&msg=' + encodeURIComponent('บันทึกราคาแล้ว'));
+});
+
+
+
+// SNIP: admin_delivery_times_routes.txt
+app.get('/admin/delivery-times', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const p = await db();
+  const [rows] = await p.query('SELECT id,name,days_mask,time_hm,enabled FROM delivery_times ORDER BY enabled DESC, time_hm ASC, name ASC');
+  const msg = req.query.msg ? String(req.query.msg) : '';
+
+  const dayNames = ['จ','อ','พ','พฤ','ศ','ส','อา'];
+  const fmtDays = (mask) => {
+    if (Number(mask) === 127) return 'ทุกวัน';
+    const out = [];
+    for (let i=0;i<7;i++) {
+      if (Number(mask) & (1<<i)) out.push(dayNames[i]);
+    }
+    return out.join(' ');
+  };
+
+  const body = `
+  <div class="card">
+    <h2 style="margin:0 0 8px">จัดการเวลาส่ง</h2>
+    <div class="muted">สร้างรอบส่งแบบนาฬิกาปลุก: เลือกวัน (ทุกวัน/จ-อา) + เวลา</div>
+
+    <h3 style="margin:14px 0 8px">เพิ่มรอบส่งใหม่</h3>
+    <form method="post" action="/admin/delivery-time/create?token=${escapeHtml(ADMIN_TOKEN)}">
+      <div class="row3">
+        <div>
+          <div class="muted">ชื่อ</div>
+          <input name="name" placeholder="เช่น รอบเช้า" required />
+        </div>
+        <div>
+          <div class="muted">เวลา</div>
+          <input name="time_hm" type="time" required />
+        </div>
+        <div>
+          <div class="muted">เปิดใช้งาน</div>
+          <select name="enabled"><option value="1" selected>ใช่</option><option value="0">ไม่</option></select>
+        </div>
+      </div>
+
+      <div style="height:10px"></div>
+      <div class="card" style="margin:0">
+        <div class="muted">วัน</div>
+        <label class="actions" style="margin-top:8px"><input type="checkbox" id="dt_everyday" checked /> <span>ทุกวัน</span></label>
+        <div class="actions" style="margin-top:8px;flex-wrap:wrap" id="dt_days">
+          ${dayNames.map((d,i)=>`<label class=\"actions\"><input type=\"checkbox\" name=\"day\" value=\"${i}\" checked /> <span>${d}</span></label>`).join('')}
+        </div>
+      </div>
+
+      <div style="height:12px"></div>
+      <button type="submit">เพิ่มรอบส่ง</button>
+    </form>
+
+    <h3 style="margin:18px 0 8px">รายการเวลาส่ง</h3>
+    <table>
+      <thead><tr><th>ชื่อ</th><th>วัน</th><th>เวลา</th><th>สถานะ</th><th>แก้ไข</th><th>ลบ</th></tr></thead>
+      <tbody>
+        ${rows.map(r => {
+          const checked = (mask, i) => (Number(mask) & (1<<i)) ? 'checked' : '';
+          return `
+          <tr>
+            <td><b>${escapeHtml(r.name)}</b></td>
+            <td>${escapeHtml(fmtDays(r.days_mask))}</td>
+            <td><code>${escapeHtml(r.time_hm)}</code></td>
+            <td>${r.enabled ? 'on' : 'off'}</td>
+            <td>
+              <form method="post" action="/admin/delivery-time/update?token=${escapeHtml(ADMIN_TOKEN)}">
+                <input type="hidden" name="id" value="${escapeHtml(r.id)}" />
+                <div class="row3">
+                  <input name="name" value="${escapeHtml(r.name)}" />
+                  <input name="time_hm" type="time" value="${escapeHtml(r.time_hm)}" />
+                  <select name="enabled"><option value="1" ${r.enabled? 'selected':''}>on</option><option value="0" ${!r.enabled? 'selected':''}>off</option></select>
+                </div>
+                <div style="height:8px"></div>
+                <div class="actions" style="flex-wrap:wrap">
+                  ${dayNames.map((d,i)=>`<label class=\"actions\"><input type=\"checkbox\" name=\"day\" value=\"${i}\" ${checked(r.days_mask,i)} /> <span>${d}</span></label>`).join('')}
+                </div>
+                <div style="height:10px"></div>
+                <button type="submit">บันทึก</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/admin/delivery-time/delete?token=${escapeHtml(ADMIN_TOKEN)}" onsubmit="return confirm('ลบรอบส่งนี้?')">
+                <input type="hidden" name="id" value="${escapeHtml(r.id)}" />
+                <button class="danger" type="submit">ลบ</button>
+              </form>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+
+    <script>
+      (function(){
+        var ed = document.getElementById('dt_everyday');
+        var box = document.getElementById('dt_days');
+        if (!ed || !box) return;
+        function sync(){
+          var checks = box.querySelectorAll('input[type=checkbox][name=day]');
+          if (ed.checked) {
+            checks.forEach(c => c.checked = true);
+          }
+        }
+        ed.addEventListener('change', sync);
+      })();
+    </script>
+  </div>
+  `;
+
+  res.type('html').send(adminLayout({ title: 'จัดการเวลาส่ง', active: 'delivery', msg, body }));
+});
+
+app.post('/admin/delivery-time/create', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const name = ((req.body && req.body.name) || '').trim();
+  const time_hm = ((req.body && req.body.time_hm) || '').trim();
+  const enabled = String((req.body && req.body.enabled) ?? '1') === '0' ? 0 : 1;
+  const day = req.body && req.body.day;
+  const days = Array.isArray(day) ? day : (day !== undefined ? [day] : []);
+  let mask = 0;
+  for (const d of days) {
+    const i = parseInt(d, 10);
+    if (i >= 0 && i <= 6) mask |= (1 << i);
+  }
+  if (!mask) mask = 127;
+  if (!name || !/^\d{2}:\d{2}$/.test(time_hm)) return redirectAdminTo(res, '/admin/delivery-times', 'กรอกชื่อและเวลาให้ถูกต้อง');
+
+  const p = await db();
+  await p.execute('INSERT INTO delivery_times(name,days_mask,time_hm,enabled) VALUES (?,?,?,?)', [name, mask, time_hm, enabled]);
+  return redirectAdminTo(res, '/admin/delivery-times', 'เพิ่มรอบส่งแล้ว');
+});
+
+app.post('/admin/delivery-time/update', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const id = Number((req.body && req.body.id) || 0);
+  const name = ((req.body && req.body.name) || '').trim();
+  const time_hm = ((req.body && req.body.time_hm) || '').trim();
+  const enabled = String((req.body && req.body.enabled) ?? '1') === '0' ? 0 : 1;
+  const day = req.body && req.body.day;
+  const days = Array.isArray(day) ? day : (day !== undefined ? [day] : []);
+  let mask = 0;
+  for (const d of days) {
+    const i = parseInt(d, 10);
+    if (i >= 0 && i <= 6) mask |= (1 << i);
+  }
+  if (!mask) mask = 127;
+  if (!id || !name || !/^\d{2}:\d{2}$/.test(time_hm)) return redirectAdminTo(res, '/admin/delivery-times', 'ข้อมูลไม่ครบ');
+
+  const p = await db();
+  await p.execute('UPDATE delivery_times SET name=?, days_mask=?, time_hm=?, enabled=? WHERE id=?', [name, mask, time_hm, enabled, id]);
+  return redirectAdminTo(res, '/admin/delivery-times', 'บันทึกแล้ว');
+});
+
+app.post('/admin/delivery-time/delete', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const id = Number((req.body && req.body.id) || 0);
+  if (!id) return redirectAdminTo(res, '/admin/delivery-times', 'id หาย');
+  const p = await db();
+  await p.execute('DELETE FROM delivery_times WHERE id=?', [id]);
+  return redirectAdminTo(res, '/admin/delivery-times', 'ลบแล้ว');
+});
+
+
+
+// SNIP: admin_guest_create_route.txt
+app.post('/admin/guest/create', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const label = ((req.body && req.body.label) || '').trim();
+  const note = ((req.body && req.body.note) || '').trim();
+  const expiresDaysRaw = ((req.body && req.body.expires_days) || '').toString().trim();
+
+  if (!label) return redirectAdminTo(res, '/admin', 'กรุณาใส่ชื่อที่แสดงของ guest');
+
+  let expiresAt = null;
+  if (expiresDaysRaw) {
+    const d = Math.max(1, Math.min(365, parseInt(expiresDaysRaw, 10) || 0));
+    if (d) {
+      expiresAt = new Date(Date.now() + d * 24 * 60 * 60 * 1000);
+    }
+  }
+
+  const token = nanoid(12);
+  const p = await db();
+  await p.execute(
+    'INSERT INTO guest_links(token,label,note,enabled,expires_at) VALUES (?,?,?,?,?)',
+    [token, label, note, 1, expiresAt]
+  );
+
+  const link = `${BASE_URL}/g/${token}`;
+  return redirectAdminTo(res, '/admin', `สร้างลิงก์ guest แล้ว: ${link}`);
+});
+
+
+
+// SNIP: admin_guest_quick_route.txt
+app.post('/admin/guest/quick', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const token = nanoid(12);
+    const label = `ลูกค้าใหม่ ${new Date().toLocaleString('th-TH')}`;
+    const p = await db();
+    await p.execute(
+      'INSERT INTO guest_links(token,label,note,enabled,expires_at) VALUES (?,?,?,?,?)',
+      [token, label, '', 1, null]
+    );
+    const link = `${BASE_URL}/g/${token}`;
+    return res.json({ ok: true, token, link });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: 'สร้างลิงก์ไม่สำเร็จครับ' });
+  }
+});
+
+
+
+// SNIP: admin_order_status_route.txt
+app.post('/admin/order/status', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { orderId, status } = req.body || {};
+  const allowed = new Set(['new', 'confirmed', 'sent', 'done', 'canceled']);
+  if (!orderId) return res.status(400).json({ ok: false, error: 'orderId หายครับ' });
+  if (!allowed.has(String(status))) return res.status(400).json({ ok: false, error: 'status ไม่ถูกต้องครับ' });
+
+  const p = await db();
+  await p.execute('UPDATE orders SET status=? WHERE order_id=?', [String(status), String(orderId)]);
+  return res.json({ ok: true });
+});
+
+
+
+// SNIP: print_route.js.txt
+app.get('/admin/order/print/:orderId', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { orderId } = req.params;
+  const p = await db();
+
+  const [orders] = await p.execute(
+    `SELECT order_id, customer_label, guest_label, created_at, status,
+            delivery_date, delivery_time_name, delivery_time_hm
+     FROM orders
+     WHERE order_id = ?
+     LIMIT 1`,
+    [orderId]
+  );
+  const o = orders[0];
+  if (!o) return res.status(404).type('text').send('not found');
+
+  const [items] = await p.execute(
+    `SELECT name_snapshot, unit_snapshot, price_snapshot, qty
+     FROM order_items
+     WHERE order_id = ?
+     ORDER BY id ASC`,
+    [orderId]
+  );
+
+  const customer = o.customer_label || o.guest_label || 'ลูกค้า';
+  const when = new Date(o.created_at).toLocaleString('th-TH');
+  const total = items.reduce((s, it) => s + (Number(it.price_snapshot || 0) * Number(it.qty || 0)), 0);
+
+  const html = `<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Print</title>
+  <style>
+    @page { size: A6; margin: 8mm; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:12px;}
+    .muted{color:#666}
+    h1{font-size:14px;margin:0 0 6px}
+    table{width:100%;border-collapse:collapse}
+    td{padding:4px 0;vertical-align:top}
+    .right{text-align:right}
+    .line{border-top:1px dashed #bbb;margin:8px 0}
+    .total{font-size:14px;font-weight:800}
+  </style>
+</head>
+<body>
+  <h1>veg</h1>
+  <div><b>${escapeHtml(customer)}</b></div>
+  <div class="muted">${escapeHtml(when)}</div>
+  ${o.delivery_time_name ? `<div class="muted">ส่ง: ${escapeHtml(o.delivery_time_name)} ${escapeHtml(o.delivery_time_hm || '')}</div>` : ''}
+  <div class="line"></div>
+
+  <table>
+    <tbody>
+      ${items.map(it => {
+        const lineTotal = Number(it.price_snapshot || 0) * Number(it.qty || 0);
+        return `<tr>
+          <td>${escapeHtml(it.name_snapshot)} <span class="muted">${escapeHtml(it.unit_snapshot || '')}</span><div class="muted">${escapeHtml(it.qty)} x ${escapeHtml(it.price_snapshot)}</div></td>
+          <td class="right"><b>${escapeHtml(lineTotal.toLocaleString('th-TH'))}</b></td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>
+
+  <div class="line"></div>
+  <div class="right total">รวม ${escapeHtml(total.toLocaleString('th-TH'))} บาท</div>
+
+  <script>
+    setTimeout(function(){ try{ window.print(); }catch(e){} }, 200);
+  </script>
+</body>
+</html>`;
+
+  res.type('html').send(html);
+});
+
+
+
+// SNIP: admin_customer_prices_routes.txt
+app.get('/admin/customer-prices', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const customerToken = String(req.query.customerToken || '').trim();
+  if (!customerToken) return redirectAdminTo(res, '/admin/customers', 'customerToken หาย');
+
+  const customer = await getCustomerByToken(customerToken);
+  if (!customer) return redirectAdminTo(res, '/admin/customers', 'ไม่พบลูกค้านี้');
+
+  const p = await db();
+  const [vegs] = await p.query('SELECT id,name,unit,price FROM veggies WHERE enabled=1 ORDER BY sort_order ASC, name ASC');
+  const [over] = await p.execute('SELECT veg_id, price FROM customer_veg_prices WHERE customer_token=?', [customerToken]);
+  const map = new Map(over.map(r => [r.veg_id, Number(r.price)]));
+  const msg = req.query.msg ? String(req.query.msg) : '';
+
+  const body = `
+  <div class="card">
+    <h2 style="margin:0 0 8px">ตั้งราคารายลูกค้า</h2>
+    <div class="muted">ลูกค้า: <b>${escapeHtml(customer.label || customerToken)}</b></div>
+    <div class="muted">ถ้าไม่กรอกราคา จะใช้ “ราคากลาง”</div>
+
+    <div style="height:12px"></div>
+    <form method="post" action="/admin/customer-prices/save?token=${escapeHtml(ADMIN_TOKEN)}">
+      <input type="hidden" name="customerToken" value="${escapeHtml(customerToken)}" />
+
+      <table>
+        <thead>
+          <tr>
+            <th>ผัก</th>
+            <th>ราคากลาง</th>
+            <th>ราคาลูกค้า</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${vegs.map(v => {
+            const base = Number(v.price || 0);
+            const cur = map.has(v.id) ? map.get(v.id) : '';
+            return `
+              <tr>
+                <td><b>${escapeHtml(v.name)}</b> <span class="muted">${escapeHtml(v.unit || '')}</span></td>
+                <td class="right">${escapeHtml(base.toLocaleString('th-TH'))}</td>
+                <td>
+                  <input name="price_${escapeHtml(v.id)}" type="number" step="0.01" placeholder="(ใช้ราคากลาง)" value="${cur === '' ? '' : escapeHtml(cur)}" />
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+
+      <div style="height:12px"></div>
+      <div class="actions" style="justify-content:flex-end">
+        <button type="submit">บันทึก</button>
+      </div>
+    </form>
+  </div>
+  `;
+
+  res.type('html').send(adminLayout({ title: 'ตั้งราคา', active: 'customers', msg, body }));
+});
+
+app.post('/admin/customer-prices/save', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const customerToken = String((req.body && req.body.customerToken) || '').trim();
+  if (!customerToken) return redirectAdminTo(res, '/admin/customers', 'customerToken หาย');
+
+  const p = await db();
+  const [vegs] = await p.query('SELECT id FROM veggies WHERE enabled=1');
+
+  const conn = await p.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    for (const v of vegs) {
+      const key = 'price_' + v.id;
+      const raw = (req.body && req.body[key])
+        ? String(req.body[key]).trim()
+        : '';
+      if (!raw) {
+        await conn.execute('DELETE FROM customer_veg_prices WHERE customer_token=? AND veg_id=?', [customerToken, v.id]);
+      } else {
+        const price = Number(raw);
+        if (!Number.isFinite(price) || price < 0) continue;
+        await conn.execute(
+          'INSERT INTO customer_veg_prices(customer_token, veg_id, price) VALUES (?,?,?) ON DUPLICATE KEY UPDATE price=VALUES(price)',
+          [customerToken, v.id, price]
+        );
+      }
+    }
+
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    return redirectAdminTo(res, '/admin/customers', 'บันทึกราคาไม่สำเร็จ');
+  } finally {
+    conn.release();
+  }
+
+  return redirectAdminTo(res, '/admin/customer-prices', 'บันทึกราคาแล้ว');
+});
+
+
+
+// TODO: rebuild remaining admin pages from /tmp snippets (customers/veggies/groups/delivery-times, print, status updates)
+
+app.listen(PORT, () => {
+  console.log(`veg-order-app listening on :${PORT}`);
+});
