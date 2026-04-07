@@ -681,7 +681,7 @@ app.get('/game', async (req, res) => {
       function applyZoom(){
         try{
           var z = baseZoom * userZoom;
-          z = Math.max(0.15, Math.min(12, Math.round(z * 4) / 4));
+          z = Math.max(0.05, Math.min(24, Math.round(z * 20) / 20));
           game.scale.setZoom(z);
         }catch(e){}
       }
@@ -776,7 +776,7 @@ app.get('/game', async (req, res) => {
             if (e.touches && e.touches.length >= 2 && pinchStartDist > 0) {
               var d = tdist(e.touches[0], e.touches[1]);
               var ratio = d / pinchStartDist;
-              userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.2, 4.0);
+              userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.05, 12.0);
               applyZoom();
             }
             e.preventDefault();
@@ -912,7 +912,7 @@ this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเล�
             if (e.touches && e.touches.length >= 2 && pinch.startDist > 0) {
               var d = tdist(e.touches[0], e.touches[1]);
               var ratio = d / pinch.startDist;
-              userZoom = Phaser.Math.Clamp(pinch.startZoom * ratio, 0.2, 4.0);
+              userZoom = Phaser.Math.Clamp(pinch.startZoom * ratio, 0.05, 12.0);
               applyZoom();
               clampScroll();
               e.preventDefault();
