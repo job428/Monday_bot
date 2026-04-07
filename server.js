@@ -455,81 +455,93 @@ app.get('/admin/orders', async (req, res) => {
       (function(){
         var sw = document.getElementById('dateSwitch');
         if (!sw) return;
-        var knob = sw.querySelector('.segKnob');
         var active = ${JSON.stringify((dateTab==='tomorrow') ? 'tomorrow' : 'today')};
         var base = '/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}';
 
-        function baseX(){
-          // knob moves one segment width
+        function baseX(which){
           var w = sw.clientWidth - 8; // padding left+right
-          return (active === 'tomorrow') ? (w/2) : 0;
+          var a = which || active;
+          return (a === 'tomorrow') ? (w/2) : 0;
         }
 
         function setX(px){
           sw.style.setProperty('--knob-x', px + 'px');
         }
 
-        // init position
-        setX(baseX());
-
         function go(next){
+          // navigate immediately when selection changes
           if (next === active) return;
           location.href = base + '&date=' + encodeURIComponent(next);
         }
 
-        var x0=null, y0=null, dragging=false;
+        // init position
+        setX(baseX());
 
-        document.addEventListener('touchstart', function(e){
+        var x0=null, y0=null, dragging=false;
+        var startActive = active;
+
+        // capture on the switch itself to avoid missing events
+        sw.addEventListener('touchstart', function(e){
           if (!e.touches || e.touches.length !== 1) return;
           var t=e.touches[0];
-          if (t.clientY > 220) return;
           x0=t.clientX; y0=t.clientY;
           dragging=true;
+          startActive = active;
           sw.classList.add('dragging');
         }, {passive:true});
 
-        document.addEventListener('touchmove', function(e){
+        sw.addEventListener('touchmove', function(e){
           if (!dragging || x0==null||y0==null) return;
           var t=e.touches[0];
           var dx=t.clientX-x0;
           var dy=t.clientY-y0;
-          if (Math.abs(dx) <= 8 || Math.abs(dx) < Math.abs(dy)) return;
+          if (Math.abs(dx) <= 6 || Math.abs(dx) < Math.abs(dy)) return;
           if (e.cancelable) e.preventDefault();
 
           var w = sw.clientWidth - 8;
           var half = w/2;
-          var bx = baseX();
+          var bx = baseX(startActive);
           var x = bx + dx;
           x = Math.max(0, Math.min(half, x));
           setX(x);
         }, {passive:false});
 
-        document.addEventListener('touchend', function(e){
+        sw.addEventListener('touchend', function(e){
           if (!dragging) return;
           dragging=false;
           sw.classList.remove('dragging');
 
           var t=(e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
-          if (!t) { x0=y0=null; setX(baseX()); return; }
+          if (!t) { x0=y0=null; setX(baseX(startActive)); return; }
 
           var dx=t.clientX-x0;
           var dy=t.clientY-y0;
           x0=y0=null;
 
-          // snap decision
           var w = sw.clientWidth - 8;
           var half = w/2;
-          var bx = baseX();
+          var bx = baseX(startActive);
           var x = Math.max(0, Math.min(half, bx + dx));
-          var next = (x > half/2) ? 'tomorrow' : 'today';
+          var next = (x >= half/2) ? 'tomorrow' : 'today';
 
-          // animate back to snapped position before navigating
-          active = next;
-          setX(baseX());
+          // snap knob
+          active = startActive; // keep current until navigate
+          setX(baseX(next));
 
-          if (Math.abs(dx) > 20 && Math.abs(dx) > Math.abs(dy)) {
-            setTimeout(function(){ go(next); }, 80);
+          // if selection changed, navigate immediately (no extra tap)
+          if (next !== startActive && Math.abs(dx) > Math.abs(dy)) {
+            setTimeout(function(){ go(next); }, 30);
+          } else {
+            // snap back
+            setX(baseX(startActive));
           }
+        }, {passive:true});
+
+        sw.addEventListener('touchcancel', function(){
+          dragging=false;
+          sw.classList.remove('dragging');
+          x0=y0=null;
+          setX(baseX(startActive));
         }, {passive:true});
       })();
     </script>
