@@ -851,9 +851,13 @@ app.get('/admin/cash', async (req, res) => {
   const monthStart = `${bkk.getFullYear()}-${String(bkk.getMonth()+1).padStart(2,'0')}-01`;
 
   const [rows] = await p.execute(
-    `SELECT id, type, amount, category, note, entry_date, created_at, customer_token, customer_label, partner_id, partner_name
-     FROM cash_entries
-     ORDER BY entry_date DESC, id DESC
+    `SELECT ce.id, ce.type, ce.amount, ce.category, ce.note, ce.entry_date, ce.created_at,
+            ce.customer_token, COALESCE(ce.customer_label, c.label) AS customer_label,
+            ce.partner_id, COALESCE(ce.partner_name, p.name) AS partner_name
+     FROM cash_entries ce
+     LEFT JOIN customers c ON c.token = ce.customer_token
+     LEFT JOIN partners p ON p.id = ce.partner_id
+     ORDER BY ce.entry_date DESC, ce.id DESC
      LIMIT 500`
   );
 
