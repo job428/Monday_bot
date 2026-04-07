@@ -895,8 +895,8 @@ app.get('/admin/customers', async (req, res) => {
 
     <script>
       (function(){
-        var customers = ${escapeHtml(JSON.stringify(customers))};
-        var deliveryTimes = ${escapeHtml(JSON.stringify(deliveryTimes))};
+        var customers = ${JSON.stringify(customers).replace(/</g,'\\u003c')};
+        var deliveryTimes = ${JSON.stringify(deliveryTimes).replace(/</g,'\\u003c')};
         var byTok = new Map(customers.map(c => [c.token, c]));
 
         var dlgD = document.getElementById('dlgCustomerDetail');
@@ -925,7 +925,7 @@ app.get('/admin/customers', async (req, res) => {
           elDt.textContent = dt ? (dt.name + (dt.time_hm ? (' ('+dt.time_hm+')') : '')) : '-';
           elNote.textContent = c.note || '-';
 
-          var link = ${escapeHtml(JSON.stringify(BASE_URL))} + '/c/' + c.token;
+          var link = ${JSON.stringify(BASE_URL)} + '/c/' + c.token;
           aOpen.href = link;
           btnCopy.onclick = function(){
             if(window.copyText) window.copyText(link).then(ok=>{ if(ok) alert('คัดลอกลิงก์แล้ว'); });
