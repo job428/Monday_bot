@@ -612,15 +612,15 @@ app.get('/game', async (req, res) => {
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Veg Shop (Prototype)</title>
   <style>
-    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
+    html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
     body{position:fixed;inset:0}
     #wrap{position:fixed;inset:0;box-sizing:border-box;padding:0;display:block}
     .top{position:fixed;left:0;right:0;top:0;z-index:10;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px;padding-top:calc(10px + env(safe-area-inset-top));background:linear-gradient(rgba(11,15,20,0.88) 60%, rgba(11,15,20,0));pointer-events:none}
     .top *{pointer-events:auto}
     a{color:#9ae6b4;text-decoration:none}
     .hint{color:#b7c0cc;font-size:12px}
-    #game{position:fixed;left:0;right:0;top:0;bottom:0;overflow:hidden;background:#111;touch-action:none}
-    #game canvas{touch-action:none}
+    #game{position:fixed;left:0;right:0;top:0;bottom:0;overflow:hidden;background:#111;touch-action:none;border-radius:0;border:0}
+    #game canvas{touch-action:none;position:absolute;left:0;top:0}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
