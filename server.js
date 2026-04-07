@@ -1520,90 +1520,144 @@ app.get('/admin/delivery-times', async (req, res) => {
 
   const body = `
   <div class="card">
-    <h2 style="margin:0 0 8px">จัดการเวลาส่ง</h2>
-    <div class="muted">สร้างรอบส่งแบบนาฬิกาปลุก: เลือกวัน (ทุกวัน/จ-อา) + เวลา</div>
+    <div class="actions" style="justify-content:space-between;align-items:center">
+      <div>
+        <h2 style="margin:0">จัดการเวลาส่ง</h2>
+        <div class="muted">แตะเพื่อดู/แก้ไขรายละเอียด</div>
+      </div>
+      <button type="button" id="btnNewDt">+ เพิ่มเวลา</button>
+    </div>
 
-    <h3 style="margin:14px 0 8px">เพิ่มรอบส่งใหม่</h3>
-    <form method="post" action="/admin/delivery-time/create?token=${escapeHtml(ADMIN_TOKEN)}">
-      <div class="row3">
+    <div style="height:12px"></div>
+
+    <div class="card" style="padding:0">
+      ${rows.map(r => {
+        const badge = r.enabled ? '' : '<span class="pill" style="background:#f2f2f2;color:#111">off</span>';
+        return `
+          <button type="button" class="secondary" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px" onclick="openDtDetail(${escapeHtml(JSON.stringify(r.id))})">
+            <div class="actions" style="justify-content:space-between;align-items:center">
+              <div>
+                <div><b>${escapeHtml(r.name)}</b> ${badge}</div>
+                <div class="muted">${escapeHtml(r.time_hm)}</div>
+              </div>
+              <div class="muted">→</div>
+            </div>
+          </button>
+        `;
+      }).join('')}
+    </div>
+
+    <dialog id="dlgNewDt" style="border:1px solid #ddd;border-radius:14px;max-width:560px;width:95%">
+      <form method="post" action="/admin/delivery-time/create?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">เพิ่มเวลาส่ง</h3>
+          <button type="button" class="secondary" id="btnCloseNewDt">ปิด</button>
+        </div>
+
+        <div style="height:12px"></div>
         <div>
           <div class="muted">ชื่อ</div>
-          <input name="name" placeholder="เช่น รอบเช้า" required />
+          <input name="name" placeholder="เช่น ดึก" required />
         </div>
+        <div style="height:10px"></div>
         <div>
           <div class="muted">เวลา</div>
           <input name="time_hm" type="time" required />
         </div>
+        <div style="height:10px"></div>
         <div>
           <div class="muted">เปิดใช้งาน</div>
-          <select name="enabled"><option value="1" selected>ใช่</option><option value="0">ไม่</option></select>
+          <select name="enabled"><option value="1" selected>on</option><option value="0">off</option></select>
         </div>
-      </div>
 
-      <div style="height:10px"></div>
-      <div class="card" style="margin:0">
-        <div class="muted">วัน</div>
-        <label class="actions" style="margin-top:8px"><input type="checkbox" id="dt_everyday" checked /> <span>ทุกวัน</span></label>
-        <div class="actions" style="margin-top:8px;flex-wrap:wrap" id="dt_days">
-          ${dayNames.map((d,i)=>`<label class=\"actions\"><input type=\"checkbox\" name=\"day\" value=\"${i}\" checked /> <span>${d}</span></label>`).join('')}
+        <div style="height:14px"></div>
+        <div class="actions" style="justify-content:flex-end">
+          <button type="button" class="secondary" id="btnCancelNewDt">ยกเลิก</button>
+          <button type="submit">เพิ่ม</button>
         </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlgDtDetail" style="border:1px solid #ddd;border-radius:14px;max-width:560px;width:95%">
+      <div class="card" style="border:none;margin:0">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0" id="dt_title">รายละเอียดเวลาส่ง</h3>
+          <button type="button" class="secondary" id="btnCloseDtDetail">ปิด</button>
+        </div>
+
+        <form method="post" action="/admin/delivery-time/update?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+          <input type="hidden" name="id" id="dt_id" />
+
+          <div style="height:12px"></div>
+          <div>
+            <div class="muted">ชื่อ</div>
+            <input name="name" id="dt_name" required />
+          </div>
+          <div style="height:10px"></div>
+          <div>
+            <div class="muted">เวลา</div>
+            <input name="time_hm" id="dt_time" type="time" required />
+          </div>
+          <div style="height:10px"></div>
+          <div>
+            <div class="muted">เปิดใช้งาน</div>
+            <select name="enabled" id="dt_enabled"><option value="1">on</option><option value="0">off</option></select>
+          </div>
+
+          <div style="height:14px"></div>
+          <div class="actions" style="justify-content:flex-end">
+            <button type="submit">บันทึก</button>
+          </div>
+        </form>
+
+        <div style="height:10px"></div>
+        <form method="post" action="/admin/delivery-time/delete?token=${escapeHtml(ADMIN_TOKEN)}" onsubmit="return confirm('ลบเวลาส่งนี้?')" style="margin:0">
+          <input type="hidden" name="id" id="dt_delete_id" />
+          <button class="danger" type="submit">ลบ</button>
+        </form>
       </div>
-
-      <div style="height:12px"></div>
-      <button type="submit">เพิ่มรอบส่ง</button>
-    </form>
-
-    <h3 style="margin:18px 0 8px">รายการเวลาส่ง</h3>
-    <table>
-      <thead><tr><th>ชื่อ</th><th>วัน</th><th>เวลา</th><th>สถานะ</th><th>แก้ไข</th><th>ลบ</th></tr></thead>
-      <tbody>
-        ${rows.map(r => {
-          const checked = (mask, i) => (Number(mask) & (1<<i)) ? 'checked' : '';
-          return `
-          <tr>
-            <td><b>${escapeHtml(r.name)}</b></td>
-            <td>${escapeHtml(fmtDays(r.days_mask))}</td>
-            <td><code>${escapeHtml(r.time_hm)}</code></td>
-            <td>${r.enabled ? 'on' : 'off'}</td>
-            <td>
-              <form method="post" action="/admin/delivery-time/update?token=${escapeHtml(ADMIN_TOKEN)}">
-                <input type="hidden" name="id" value="${escapeHtml(r.id)}" />
-                <div class="row3">
-                  <input name="name" value="${escapeHtml(r.name)}" />
-                  <input name="time_hm" type="time" value="${escapeHtml(r.time_hm)}" />
-                  <select name="enabled"><option value="1" ${r.enabled? 'selected':''}>on</option><option value="0" ${!r.enabled? 'selected':''}>off</option></select>
-                </div>
-                <div style="height:8px"></div>
-                <div class="actions" style="flex-wrap:wrap">
-                  ${dayNames.map((d,i)=>`<label class=\"actions\"><input type=\"checkbox\" name=\"day\" value=\"${i}\" ${checked(r.days_mask,i)} /> <span>${d}</span></label>`).join('')}
-                </div>
-                <div style="height:10px"></div>
-                <button type="submit">บันทึก</button>
-              </form>
-            </td>
-            <td>
-              <form method="post" action="/admin/delivery-time/delete?token=${escapeHtml(ADMIN_TOKEN)}" onsubmit="return confirm('ลบรอบส่งนี้?')">
-                <input type="hidden" name="id" value="${escapeHtml(r.id)}" />
-                <button class="danger" type="submit">ลบ</button>
-              </form>
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>
+    </dialog>
 
     <script>
       (function(){
-        var ed = document.getElementById('dt_everyday');
-        var box = document.getElementById('dt_days');
-        if (!ed || !box) return;
-        function sync(){
-          var checks = box.querySelectorAll('input[type=checkbox][name=day]');
-          if (ed.checked) {
-            checks.forEach(c => c.checked = true);
-          }
-        }
-        ed.addEventListener('change', sync);
+        var rows = ${JSON.stringify(rows).replace(/</g,'\\u003c')};
+        var byId = new Map(rows.map(r => [Number(r.id), r]));
+
+        var dlgNew = document.getElementById('dlgNewDt');
+        var btnNew = document.getElementById('btnNewDt');
+        var btnCloseNew = document.getElementById('btnCloseNewDt');
+        var btnCancelNew = document.getElementById('btnCancelNewDt');
+
+        var dlgD = document.getElementById('dlgDtDetail');
+        var btnCloseD = document.getElementById('btnCloseDtDetail');
+
+        var elId = document.getElementById('dt_id');
+        var elTitle = document.getElementById('dt_title');
+        var elName = document.getElementById('dt_name');
+        var elTime = document.getElementById('dt_time');
+        var elEnabled = document.getElementById('dt_enabled');
+        var delId = document.getElementById('dt_delete_id');
+
+        function openDlg(d){ if(d && d.showModal) d.showModal(); else if(d) d.setAttribute('open','open'); }
+        function closeDlg(d){ if(d && d.close) d.close(); else if(d) d.removeAttribute('open'); }
+
+        if (btnNew) btnNew.addEventListener('click', function(){ openDlg(dlgNew); });
+        if (btnCloseNew) btnCloseNew.addEventListener('click', function(){ closeDlg(dlgNew); });
+        if (btnCancelNew) btnCancelNew.addEventListener('click', function(){ closeDlg(dlgNew); });
+
+        window.openDtDetail = function(id){
+          var r = byId.get(Number(id));
+          if(!r) return;
+          elId.value = r.id;
+          delId.value = r.id;
+          elTitle.textContent = r.name;
+          elName.value = r.name || '';
+          elTime.value = r.time_hm || '';
+          elEnabled.value = String(r.enabled ? 1 : 0);
+          openDlg(dlgD);
+        };
+
+        if (btnCloseD) btnCloseD.addEventListener('click', function(){ closeDlg(dlgD); });
       })();
     </script>
   </div>
