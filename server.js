@@ -609,7 +609,7 @@ app.get('/game', async (req, res) => {
 <html lang="th">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Veg Shop (Prototype)</title>
   <style>
     body{margin:0;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
@@ -840,6 +840,24 @@ app.get('/game', async (req, res) => {
             e.preventDefault();
           }, {passive:false});
           c2.addEventListener('gestureend', function(e){
+            e.preventDefault();
+          }, {passive:false});
+
+          // Some iOS standalone builds dispatch gesture events on document (not canvas)
+          document.addEventListener('gesturestart', function(e){
+            try{ gStartZoom = userZoom; }catch(_){}
+            e.preventDefault();
+          }, {passive:false});
+          document.addEventListener('gesturechange', function(e){
+            try{
+              if (typeof e.scale === 'number') {
+                userZoom = Phaser.Math.Clamp(gStartZoom * e.scale, 0.75, 2.5);
+                applyZoom();
+              }
+            }catch(_){}
+            e.preventDefault();
+          }, {passive:false});
+          document.addEventListener('gestureend', function(e){
             e.preventDefault();
           }, {passive:false});
         }catch(e){}
