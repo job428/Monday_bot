@@ -619,7 +619,7 @@ app.get('/game', async (req, res) => {
     .top *{pointer-events:auto}
     a{color:#9ae6b4;text-decoration:none}
     .hint{color:#b7c0cc;font-size:12px}
-    #game{position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(10px + env(safe-area-inset-top));bottom:calc(10px + env(safe-area-inset-bottom));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
+    #game{position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:calc(10px + env(safe-area-inset-bottom));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
     /* subtle 'game screen' feel: inner frame + very light scanlines */
     #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 4px rgba(255,255,255,0.14), inset 0 0 60px rgba(0,0,0,0.28)}
     #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.22;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0px, rgba(255,255,255,0.06) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
