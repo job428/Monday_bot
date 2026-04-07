@@ -621,8 +621,8 @@ app.get('/game', async (req, res) => {
     .hint{color:#b7c0cc;font-size:12px}
     #game{position:fixed;left:0;right:0;top:0;bottom:0;overflow:hidden;background:#111;touch-action:none;border-radius:0;border:0}
     /* subtle 'game screen' feel: inner frame + very light scanlines */
-    #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 2px rgba(255,255,255,0.06), inset 0 0 40px rgba(0,0,0,0.18)}
-    #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.10;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0px, rgba(255,255,255,0.06) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
+    #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 4px rgba(255,255,255,0.14), inset 0 0 60px rgba(0,0,0,0.28)}
+    #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.22;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0px, rgba(255,255,255,0.06) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
     #game canvas{touch-action:none;position:absolute;left:0;top:0;width:100% !important;height:100% !important}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
