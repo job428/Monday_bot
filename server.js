@@ -619,7 +619,7 @@ app.get('/game', async (req, res) => {
     .top *{pointer-events:auto}
     a{color:#9ae6b4;text-decoration:none}
     .hint{color:#b7c0cc;font-size:12px}
-    #game{position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:calc(10px + env(safe-area-inset-bottom));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
+    #game{--vpad:0px;position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top) + var(--vpad));bottom:calc(10px + env(safe-area-inset-bottom) + var(--vpad));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
     /* subtle 'game screen' feel: inner frame + very light scanlines */
     #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 4px rgba(255,255,255,0.14), inset 0 0 60px rgba(0,0,0,0.28)}
     #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.22;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0px, rgba(255,255,255,0.06) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
@@ -645,7 +645,24 @@ app.get('/game', async (req, res) => {
       var br = document.getElementById('btnRefresh');
       if (br) br.addEventListener('click', function(){ location.reload(); });
 
-      // Pixel-art feel: low resolution internal canvas + no smoothing.
+      // Pixel-art feel
+
+      // Letterbox zoom-out: keep left/right locked; shrink top/bottom inwards
+      var vpadPx = 0;
+      function setVPad(px){
+        try{
+          vpadPx = Math.max(0, Math.floor(px));
+          var el = document.getElementById('game');
+          if (el) el.style.setProperty('--vpad', vpadPx + 'px');
+        }catch(e){}
+      }
+
+      function maxVPad(){
+        // leave at least 120px of play area height
+        var h = Math.max(1, window.innerHeight);
+        return Math.max(0, Math.floor((h - 120) / 2));
+      }
+: low resolution internal canvas + no smoothing.
       var W = 180, H = 320; // internal resolution (portrait)
 
       function containerSize(){
@@ -676,25 +693,18 @@ app.get('/game', async (req, res) => {
       };
 
       var game = new Phaser.Game(config);
-      // Zoom architecture (scale-only): baseZoom (default far) * userZoom (pinch)
-      var baseZoom = 1.0;
-      var userZoom = 1.0;
-
-      function applyZoom(){
-        try{
-          var z = baseZoom * userZoom;
-          z = Math.max(0.05, Math.min(24, Math.round(z * 20) / 20));
-          game.scale.setZoom(z);
-        }catch(e){}
-      }
+      // Scale zoom: fixed (we use letterbox for zoom-out UX)
+            }
       function onResize(){
         try{
           game.scale.resize(W, H);
           applyZoom();
         }catch(e){}
       }
-      window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
+      window.addEventListener('resize', function(){ setTimeout(onResize, 50);
+      setVPad(0); });
       setTimeout(onResize, 50);
+      setVPad(0);
       setTimeout(function(){ try{applyZoom();}catch(e){} }, 80);
 
 
@@ -879,7 +889,7 @@ this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเล�
             if (e.touches && e.touches.length >= 2) {
               pinch.active = true;
               pinch.startDist = tdist(e.touches[0], e.touches[1]);
-              pinch.startZoom = userZoom;
+              pinch.startZoom = 1.0;
               // stop panning while pinching
               try{ if (typeof isPanning !== 'undefined') isPanning = false; }catch(_){}
               e.preventDefault();
@@ -891,8 +901,11 @@ this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเล�
             if (e.touches && e.touches.length >= 2 && pinch.startDist > 0) {
               var d = tdist(e.touches[0], e.touches[1]);
               var ratio = d / pinch.startDist;
-              userZoom = Phaser.Math.Clamp(pinch.startZoom * ratio, 0.05, 12.0);
-              applyZoom();
+              // ratio >1 => zoom in (reduce letterbox), ratio <1 => zoom out (increase letterbox)
+              var target = Phaser.Math.Clamp(pinch.startZoom / ratio, 0.25, 4.0);
+              // Map target zoom-out to vpad: 1.0 => 0px, 0.25 => maxVPad
+              var t = Phaser.Math.Clamp((1.0 - target) / (1.0 - 0.25), 0, 1);
+              setVPad(t * maxVPad());
               clampScroll();
               e.preventDefault();
             }
