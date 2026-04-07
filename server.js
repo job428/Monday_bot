@@ -674,12 +674,21 @@ app.get('/game', async (req, res) => {
       };
 
       var game = new Phaser.Game(config);
-      // Fixed zoom (no pinch/zoom interactions)
-      var FIXED_ZOOM = 0.25;
+      // Zoom architecture (scale-only): baseZoom (default far) * userZoom (pinch)
+      var baseZoom = 0.25;
+      var userZoom = 1.0;
+
+      function applyZoom(){
+        try{
+          var z = baseZoom * userZoom;
+          z = Math.max(0.15, Math.min(12, Math.round(z * 4) / 4));
+          game.scale.setZoom(z);
+        }catch(e){}
+      }
       function onResize(){
         try{
           game.scale.resize(W, H);
-          game.scale.setZoom(FIXED_ZOOM);
+          applyZoom();
         }catch(e){}
       }
       window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
@@ -838,7 +847,7 @@ app.get('/game', async (req, res) => {
         var edgeR = this.add.rectangle(W-30, H/2, 30, H, 0x000000, 0.0).setOrigin(0,0.5).setScrollFactor(0);
 
         // UI hint
-        this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setOrigin(0.5,0).setScrollFactor(0);
+        this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ถ่าง/หุบเพื่อซูม', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setOrigin(0.5,0).setScrollFactor(0);
 
         var cam = this.cameras.main;
 
@@ -862,6 +871,47 @@ app.get('/game', async (req, res) => {
           edgeL.alpha = 0.45 * atL;
           edgeR.alpha = 0.45 * atR;
         }, this);
+
+        
+        // Touch pinch (2 fingers) - zoom (works on iOS/Chrome even when pointer2 is missing)
+        try{
+          var canvasEl = this.sys.game.canvas;
+          var pinch = { active:false, startDist:0, startZoom:1 };
+          function tdist(t0,t1){
+            var dx=t0.clientX-t1.clientX, dy=t0.clientY-t1.clientY;
+            return Math.sqrt(dx*dx+dy*dy);
+          }
+
+          canvasEl.addEventListener('touchstart', function(e){
+            if (e.touches && e.touches.length >= 2) {
+              pinch.active = true;
+              pinch.startDist = tdist(e.touches[0], e.touches[1]);
+              pinch.startZoom = userZoom;
+              // stop panning while pinching
+              isPanning = false;
+              e.preventDefault();
+            }
+          }, {passive:false});
+
+          canvasEl.addEventListener('touchmove', function(e){
+            if (!pinch.active) return;
+            if (e.touches && e.touches.length >= 2 && pinch.startDist > 0) {
+              var d = tdist(e.touches[0], e.touches[1]);
+              var ratio = d / pinch.startDist;
+              userZoom = Phaser.Math.Clamp(pinch.startZoom * ratio, 0.2, 4.0);
+              applyZoom();
+              clampScroll();
+              e.preventDefault();
+            }
+          }, {passive:false});
+
+          canvasEl.addEventListener('touchend', function(e){
+            if (!e.touches || e.touches.length < 2) {
+              pinch.active = false;
+              pinch.startDist = 0;
+            }
+          }, {passive:true});
+        }catch(e){}
 
         // Horizontal pan (drag to scroll)
         var isPanning = false;
