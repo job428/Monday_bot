@@ -1234,24 +1234,30 @@ app.get('/admin/veggies', async (req, res) => {
         var dlg = document.getElementById('dlgNewVeg');
         var close1 = document.getElementById('btnCloseNewVeg');
         var close2 = document.getElementById('btnCancelNewVeg');
-        if(btn && dlg){
-          function openDlg(){
-            if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','open');
-            var idEl = document.getElementById('newVegId');
-            var nameEl = document.getElementById('newVegName');
-            if (idEl) idEl.value = genId();
-            if (nameEl) {
-              nameEl.value=''; nameEl.focus();
-              nameEl.oninput = function(){
-                var slug = slugify(nameEl.value);
-                if (slug && idEl) idEl.value = slug;
-              };
-            }
+
+        function openNewVeg(){
+          if (!dlg) return;
+          if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','open');
+          var idEl = document.getElementById('newVegId');
+          var nameEl = document.getElementById('newVegName');
+          if (idEl) idEl.value = genId();
+          if (nameEl) {
+            nameEl.value=''; nameEl.focus();
+            nameEl.oninput = function(){
+              var slug = slugify(nameEl.value);
+              if (slug && idEl) idEl.value = slug;
+            };
           }
-          function closeDlg(){ if (dlg.close) dlg.close(); else dlg.removeAttribute('open'); }
-          btn.addEventListener('click', openDlg);
-          if(close1) close1.addEventListener('click', closeDlg);
-          if(close2) close2.addEventListener('click', closeDlg);
+        }
+        function closeNewVeg(){
+          if (!dlg) return;
+          if (dlg.close) dlg.close(); else dlg.removeAttribute('open');
+        }
+
+        if(btn && dlg){
+          btn.addEventListener('click', openNewVeg);
+          if(close1) close1.addEventListener('click', closeNewVeg);
+          if(close2) close2.addEventListener('click', closeNewVeg);
         }
 
         var dlgD = document.getElementById('dlgVegDetail');
@@ -1269,6 +1275,9 @@ app.get('/admin/veggies', async (req, res) => {
         function closeDlg(d){ if(d && d.close) d.close(); else if(d) d.removeAttribute('open'); }
 
         window.openVegDetail = function(id){
+          // safety: close "new veg" dialog if it accidentally opened on iOS
+          try { closeNewVeg(); } catch(e) {}
+
           var v = byId.get(String(id));
           if(!v) return;
           elTitle.textContent = v.name || 'ผัก';
