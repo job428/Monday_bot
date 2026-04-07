@@ -1152,7 +1152,7 @@ app.get('/admin/veggies', async (req, res) => {
     <div class="card" style="padding:0">
       ${veggies.map(v => {
         return `
-          <button type="button" class="secondary" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px" onclick="openVegDetail(${escapeHtml(JSON.stringify(v.id))})">
+          <button type="button" class="secondary" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px" onclick="event && event.preventDefault && event.preventDefault(); event && event.stopPropagation && event.stopPropagation(); openVegDetail(${escapeHtml(JSON.stringify(v.id))}); return false;">
             <div class="actions" style="justify-content:space-between;align-items:center">
               <div>
                 <div><b>${escapeHtml(v.name)}</b> <span class="muted">${escapeHtml(v.unit||'')}</span></div>
