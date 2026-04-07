@@ -836,16 +836,6 @@ app.get('/game', async (req, res) => {
         r.setScrollFactor(0);
         r.setBlendMode(Phaser.BlendModes.MULTIPLY);
 
-        // Edge vignette (helps user see screen bounds)
-        var vignTop = this.add.rectangle(W/2, 0, W, 18, 0x000000, 0.35).setOrigin(0.5,0).setScrollFactor(0);
-        var vignBot = this.add.rectangle(W/2, H-18, W, 18, 0x000000, 0.35).setOrigin(0.5,0).setScrollFactor(0);
-        var vignL = this.add.rectangle(0, H/2, 22, H, 0x000000, 0.35).setOrigin(0,0.5).setScrollFactor(0);
-        var vignR = this.add.rectangle(W-22, H/2, 22, H, 0x000000, 0.35).setOrigin(0,0.5).setScrollFactor(0);
-
-        // Boundary hint: fades in when you reach left/right end
-        var edgeL = this.add.rectangle(0, H/2, 30, H, 0x000000, 0.0).setOrigin(0,0.5).setScrollFactor(0);
-        var edgeR = this.add.rectangle(W-30, H/2, 30, H, 0x000000, 0.0).setOrigin(0,0.5).setScrollFactor(0);
-
         // UI hint
         
 
@@ -870,12 +860,6 @@ this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเล�
           try{
             var t = (this.input && this.input.manager && this.input.manager.pointers) ? this.input.manager.pointers.filter(p=>p && p.isDown).length : 0;
           }catch(e){}
-
-          var maxX = maxScrollX();
-          var atL = maxX <= 0 ? 1 : (1 - Phaser.Math.Clamp(cam.scrollX / 24, 0, 1));
-          var atR = maxX <= 0 ? 1 : (1 - Phaser.Math.Clamp((maxX - cam.scrollX) / 24, 0, 1));
-          edgeL.alpha = 0.45 * atL;
-          edgeR.alpha = 0.45 * atR;
         }, this);
 
         
