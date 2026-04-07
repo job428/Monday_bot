@@ -1149,86 +1149,71 @@ app.get('/admin/veggies', async (req, res) => {
       </form>
     </dialog>
 
-    <table class="veg-table">
-      <thead>
-        <tr>
-          <th>ผัก</th>
-          <th>ราคา</th>
-          <th>เปิด</th>
-          <th>จัดการ</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${veggies.map(v => {
-          return `
-          <tr>
-            <td>
-              <div><b>${escapeHtml(v.name)}</b> <span class="muted">${escapeHtml(v.unit||'')}</span></div>
-              <div class="muted">id: ${escapeHtml(v.id)}</div>
-            </td>
-            <td class="right"><b>${escapeHtml(Number(v.price||0).toLocaleString('th-TH'))}</b></td>
-            <td>${v.enabled ? 'on' : 'off'}</td>
-            <td class="actions-cell">
-              <div class="actions" style="justify-content:flex-end">
-                <button type="button" class="secondary" onclick="openEditVeg(${escapeHtml(JSON.stringify(v.id))}, ${escapeHtml(JSON.stringify(v.name))}, ${escapeHtml(JSON.stringify(v.unit||''))}, ${escapeHtml(JSON.stringify(String(v.price||0)))}, ${escapeHtml(JSON.stringify(String(v.sort_order||0)))}, ${v.enabled?1:0})">แก้ไข</button>
-                <form method="post" action="/admin/veg/delete?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0" onsubmit="return confirm('ลบผักนี้?')">
-                  <input type="hidden" name="id" value="${escapeHtml(v.id)}" />
-                  <button type="submit" class="danger">ลบ</button>
-                </form>
+    <div class="card" style="padding:0">
+      ${veggies.map(v => {
+        return `
+          <button type="button" class="secondary" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px" onclick="openVegDetail(${escapeHtml(JSON.stringify(v.id))})">
+            <div class="actions" style="justify-content:space-between;align-items:center">
+              <div>
+                <div><b>${escapeHtml(v.name)}</b> <span class="muted">${escapeHtml(v.unit||'')}</span></div>
+                <div class="muted">${escapeHtml(Number(v.price||0).toLocaleString('th-TH'))} บาท</div>
               </div>
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>
+              <div class="muted">→</div>
+            </div>
+          </button>
+        `;
+      }).join('')}
+    </div>
 
-    <dialog id="dlgEditVeg" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
-      <form method="post" action="/admin/veg/update?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
-        <input type="hidden" name="id" id="editVegId" />
+    <dialog id="dlgVegDetail" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+      <div class="card" style="border:none;margin:0">
         <div class="actions" style="justify-content:space-between;align-items:center">
-          <h3 style="margin:0">แก้ไขผัก</h3>
-          <button type="button" class="secondary" id="btnCloseEditVeg">ปิด</button>
+          <h3 style="margin:0" id="vegTitle">รายละเอียดผัก</h3>
+          <button type="button" class="secondary" id="btnCloseVegDetail">ปิด</button>
         </div>
-        <div class="muted" id="editVegIdShow" style="margin-top:6px"></div>
-        <div style="height:12px"></div>
+        <div class="muted" id="vegIdShow" style="margin-top:6px"></div>
 
-        <div class="row3">
-          <div>
-            <div class="muted">ชื่อ</div>
-            <input name="name" id="editVegName" required />
+        <form method="post" action="/admin/veg/update?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+          <input type="hidden" name="id" id="editVegId" />
+
+          <div style="height:12px"></div>
+          <div class="row3">
+            <div>
+              <div class="muted">ชื่อ</div>
+              <input name="name" id="editVegName" required />
+            </div>
+            <div>
+              <div class="muted">หน่วย</div>
+              <input name="unit" id="editVegUnit" />
+            </div>
+            <div>
+              <div class="muted">ราคา</div>
+              <input name="price" id="editVegPrice" type="number" step="0.01" required />
+            </div>
           </div>
-          <div>
-            <div class="muted">หน่วย</div>
-            <input name="unit" id="editVegUnit" />
+
+          <div style="height:10px"></div>
+          <div class="row3">
+            <div>
+              <div class="muted">sort_order</div>
+              <input name="sort_order" id="editVegSort" type="number" step="1" />
+            </div>
+            <div></div>
+            <div></div>
           </div>
-          <div>
-            <div class="muted">ราคา</div>
-            <input name="price" id="editVegPrice" type="number" step="0.01" required />
+
+          <div style="height:14px"></div>
+          <div class="actions" style="justify-content:flex-end">
+            <button type="submit">บันทึก</button>
           </div>
-        </div>
+        </form>
 
         <div style="height:10px"></div>
-        <div class="row3">
-          <div>
-            <div class="muted">sort_order</div>
-            <input name="sort_order" id="editVegSort" type="number" step="1" />
-          </div>
-          <div>
-            <div class="muted">เปิดใช้งาน</div>
-            <select name="enabled" id="editVegEnabled">
-              <option value="1">ใช่</option>
-              <option value="0">ไม่</option>
-            </select>
-          </div>
-          <div></div>
-        </div>
-
-        <div style="height:14px"></div>
-        <div class="actions" style="justify-content:flex-end">
-          <button type="button" class="secondary" id="btnCancelEditVeg">ยกเลิก</button>
-          <button type="submit">บันทึก</button>
-        </div>
-      </form>
+        <form method="post" action="/admin/veg/delete?token=${escapeHtml(ADMIN_TOKEN)}" onsubmit="return confirm('ลบผักนี้?')" style="margin:0">
+          <input type="hidden" name="id" id="vegDeleteId" />
+          <button type="submit" class="danger">ลบ</button>
+        </form>
+      </div>
     </dialog>
 
     <script>
@@ -1241,6 +1226,9 @@ app.get('/admin/veggies', async (req, res) => {
             .replace(/^_+|_+$/g,'');
         }
         function genId(){ return 'veg_' + Math.random().toString(36).slice(2,6); }
+
+        var vegs = ${JSON.stringify(veggies).replace(/</g,'\\u003c')};
+        var byId = new Map(vegs.map(v => [v.id, v]));
 
         var btn = document.getElementById('btnNewVeg');
         var dlg = document.getElementById('dlgNewVeg');
@@ -1266,31 +1254,35 @@ app.get('/admin/veggies', async (req, res) => {
           if(close2) close2.addEventListener('click', closeDlg);
         }
 
-        var dlgE = document.getElementById('dlgEditVeg');
-        var closeE1 = document.getElementById('btnCloseEditVeg');
-        var closeE2 = document.getElementById('btnCancelEditVeg');
+        var dlgD = document.getElementById('dlgVegDetail');
+        var btnClose = document.getElementById('btnCloseVegDetail');
+        var elTitle = document.getElementById('vegTitle');
+        var elIdShow = document.getElementById('vegIdShow');
         var elId = document.getElementById('editVegId');
-        var elShow = document.getElementById('editVegIdShow');
         var elName = document.getElementById('editVegName');
         var elUnit = document.getElementById('editVegUnit');
         var elPrice = document.getElementById('editVegPrice');
         var elSort = document.getElementById('editVegSort');
-        var elEn = document.getElementById('editVegEnabled');
+        var delId = document.getElementById('vegDeleteId');
 
-        window.openEditVeg = function(id,name,unit,price,sortOrder,enabled){
-          if(!dlgE) return;
-          elId.value=id;
-          elShow.textContent='id: '+id;
-          elName.value=name||'';
-          elUnit.value=unit||'';
-          elPrice.value=price||'';
-          elSort.value=sortOrder||'0';
-          elEn.value=String(enabled||1);
-          if(dlgE.showModal) dlgE.showModal(); else dlgE.setAttribute('open','open');
+        function openDlg(d){ if(d && d.showModal) d.showModal(); else if(d) d.setAttribute('open','open'); }
+        function closeDlg(d){ if(d && d.close) d.close(); else if(d) d.removeAttribute('open'); }
+
+        window.openVegDetail = function(id){
+          var v = byId.get(id);
+          if(!v) return;
+          elTitle.textContent = v.name || 'ผัก';
+          elIdShow.textContent = 'id: ' + v.id;
+          elId.value = v.id;
+          elName.value = v.name || '';
+          elUnit.value = v.unit || '';
+          elPrice.value = String(v.price||0);
+          elSort.value = String(v.sort_order||0);
+          delId.value = v.id;
+          openDlg(dlgD);
         };
-        function closeEDlg(){ if(dlgE && dlgE.close) dlgE.close(); else if(dlgE) dlgE.removeAttribute('open'); }
-        if(closeE1) closeE1.addEventListener('click', closeEDlg);
-        if(closeE2) closeE2.addEventListener('click', closeEDlg);
+
+        if(btnClose) btnClose.addEventListener('click', function(){ closeDlg(dlgD); });
       })();
     </script>
   </div>
