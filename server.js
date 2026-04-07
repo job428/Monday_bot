@@ -249,6 +249,7 @@ function adminNav(active) {
     ${link('/admin/delivery-times', 'เวลาส่ง', 'delivery')}
     ${link('/admin/cash', 'รายรับรายจ่าย', 'cash')}
     ${link('/admin/partners', 'พาร์ทเนอร์', 'partners')}
+    <a class="nav" href="/game" target="_blank" rel="noopener">เกม</a>
   </div>`;
 }
 
@@ -599,6 +600,161 @@ app.get('/admin/orders', async (req, res) => {
 
 
 
+
+
+// --- game (public) ---
+// Simple pixel-art scene inspired by cozy farming/shop games.
+app.get('/game', async (req, res) => {
+  res.type('html').send(`<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Veg Shop (Prototype)</title>
+  <style>
+    body{margin:0;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
+    #wrap{max-width:980px;margin:0 auto;padding:14px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+    a{color:#9ae6b4;text-decoration:none}
+    .hint{color:#b7c0cc;font-size:12px}
+    #game{border:1px solid #243041;border-radius:14px;overflow:hidden;background:#111}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+</head>
+<body>
+  <div id="wrap">
+    <div class="top">
+      <div>
+        <div style="font-weight:900;font-size:18px">ร้านขายผัก (ห้องเปล่า ๆ)</div>
+        <div class="hint">Prototype: ฉากนิ่งสไตล์พิกเซล (ยังไม่ต้องเดิน) · ต่อไปค่อยเพิ่มลากวาง/แอนิเมชัน</div>
+      </div>
+      <div class="hint"><a href="/admin?token=${escapeHtml(ADMIN_TOKEN)}">กลับหน้าแอดมิน</a></div>
+    </div>
+
+    <div id="game"></div>
+  </div>
+
+  <script>
+    (function(){
+      // Pixel-art feel: low resolution internal canvas + no smoothing.
+      var W = 320, H = 180; // internal resolution
+      var SCALE = Math.min(3, Math.floor((Math.min(window.innerWidth, 980) - 28) / W) || 2);
+
+      var config = {
+        type: Phaser.CANVAS,
+        parent: 'game',
+        backgroundColor: '#0b0f14',
+        width: W,
+        height: H,
+        zoom: SCALE,
+        pixelArt: true,
+        scene: { preload: preload, create: create }
+      };
+
+      new Phaser.Game(config);
+
+      function preload(){
+        // generate simple textures at runtime (no assets yet)
+        var g = this.make.graphics({x:0,y:0,add:false});
+
+        // floor tile (wood)
+        g.clear();
+        g.fillStyle(0xb07a4a,1); g.fillRect(0,0,16,16);
+        g.fillStyle(0x8e5f39,1); g.fillRect(0,0,16,2);
+        g.fillStyle(0x935f35,1); g.fillRect(0,8,16,1);
+        g.generateTexture('tile_wood',16,16);
+
+        // wall tile
+        g.clear();
+        g.fillStyle(0x587a9b,1); g.fillRect(0,0,16,16);
+        g.fillStyle(0x3f5e7d,1); g.fillRect(0,0,16,3);
+        g.fillStyle(0x2f475f,1); g.fillRect(0,15,16,1);
+        g.generateTexture('tile_wall',16,16);
+
+        // counter
+        g.clear();
+        g.fillStyle(0x6f4a2d,1); g.fillRect(0,4,32,12);
+        g.fillStyle(0x8a5a35,1); g.fillRect(0,0,32,6);
+        g.fillStyle(0x3a2516,1); g.fillRect(0,15,32,1);
+        g.generateTexture('counter',32,16);
+
+        // shelf
+        g.clear();
+        g.fillStyle(0x6b7a45,1); g.fillRect(0,2,32,12);
+        g.fillStyle(0x4c5a31,1); g.fillRect(0,12,32,2);
+        g.fillStyle(0x2a321b,1); g.fillRect(0,14,32,2);
+        g.generateTexture('shelf',32,16);
+
+        // door
+        g.clear();
+        g.fillStyle(0x3a2516,1); g.fillRect(0,0,16,16);
+        g.fillStyle(0x6f4a2d,1); g.fillRect(2,2,12,14);
+        g.fillStyle(0x1a120b,1); g.fillRect(7,8,2,2);
+        g.generateTexture('door',16,16);
+
+        // sign (veg shop)
+        g.clear();
+        g.fillStyle(0x1b2a1a,1); g.fillRect(0,0,64,18);
+        g.fillStyle(0x2f7d32,1); g.fillRect(1,1,62,16);
+        g.fillStyle(0x124115,1); g.fillRect(2,2,60,14);
+        g.generateTexture('sign',64,18);
+      }
+
+      function create(){
+        // Disable smoothing on canvas for crisp pixels
+        try{
+          var c = this.sys.game.canvas;
+          c.style.imageRendering = 'pixelated';
+          c.style.imageRendering = 'crisp-edges';
+        }catch(e){}
+
+        var tile = 16;
+        var cols = Math.floor(W/tile);
+        var rows = Math.floor(H/tile);
+
+        // Floor
+        for (var y=0; y<rows; y++){
+          for (var x=0; x<cols; x++){
+            this.add.image(x*tile, y*tile, 'tile_wood').setOrigin(0,0);
+          }
+        }
+
+        // Walls (top + left + right)
+        for (var x=0; x<cols; x++) this.add.image(x*tile, 0, 'tile_wall').setOrigin(0,0);
+        for (var y=0; y<rows; y++){
+          this.add.image(0, y*tile, 'tile_wall').setOrigin(0,0);
+          this.add.image((cols-1)*tile, y*tile, 'tile_wall').setOrigin(0,0);
+        }
+
+        // Door at bottom center
+        var doorX = Math.floor(cols/2)*tile;
+        var doorY = (rows-1)*tile;
+        this.add.image(doorX, doorY, 'door').setOrigin(0,0);
+
+        // Counter near front
+        this.add.image(tile*5, tile*9, 'counter').setOrigin(0,0);
+        this.add.image(tile*7, tile*9, 'counter').setOrigin(0,0);
+
+        // Shelves
+        this.add.image(tile*3, tile*4, 'shelf').setOrigin(0,0);
+        this.add.image(tile*11, tile*4, 'shelf').setOrigin(0,0);
+
+        // Sign
+        this.add.image(tile*8, tile*1, 'sign').setOrigin(0.5,0);
+        this.add.text(tile*8, tile*1+4, 'VEG SHOP', {fontFamily:'monospace', fontSize:'10px', color:'#d9fbe1'}).setOrigin(0.5,0);
+
+        // Simple ambient overlay
+        var r = this.add.rectangle(W/2, H/2, W, H, 0x000000, 0.12);
+        r.setBlendMode(Phaser.BlendModes.MULTIPLY);
+
+        // Small UI hint inside canvas
+        this.add.text(8, H-14, 'Scene only · next: drag/drop + animations', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'});
+      }
+    })();
+  </script>
+</body>
+</html>`);
+});
 // --- admin partners (ผู้รับเงิน/ผู้ขายของ) ---
 app.get('/admin/partners', async (req, res) => {
   if (!requireAdmin(req, res)) return;
