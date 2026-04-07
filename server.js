@@ -664,7 +664,7 @@ app.get('/game', async (req, res) => {
           touch: { capture: true }
         },
         scale: {
-          mode: Phaser.Scale.ENVELOP,
+          mode: Phaser.Scale.FIT,
           autoCenter: Phaser.Scale.CENTER_BOTH,
           parent: 'game',
           width: W,
@@ -674,71 +674,17 @@ app.get('/game', async (req, res) => {
       };
 
       var game = new Phaser.Game(config);
-
-      // Separate zoom layers:
-      // - baseZoom: auto cover zoom to fill screen
-      // - userZoom: pinch multiplier (no camera zoom)
-      var baseZoom = 1;
-      var userZoom = 0.25;
-
-      function applyZoom(){
-        try{
-          var z = baseZoom * userZoom;
-          // keep pixel-ish steps
-          z = Math.max(0.2, Math.min(12, Math.round(z * 4) / 4));
-          game.scale.setZoom(z);
-        }catch(e){}
-      }
-
+      // Fixed zoom (no pinch/zoom interactions)
+      var FIXED_ZOOM = 0.25;
       function onResize(){
         try{
-          var s = containerSize();
           game.scale.resize(W, H);
-          baseZoom = Math.max(s.w / W, s.h / H);
-          applyZoom();
-        }catch(e){}
-
-        // iOS (Add to Home / Safari): handle pinch ourselves and prevent page gestures
-        try{
-          var c2 = this.sys.game.canvas;
-          var pinchStartDist = 0;
-          var pinchStartZoom = 1;
-
-          function tdist(t0, t1){
-            var dx = t0.clientX - t1.clientX;
-            var dy = t0.clientY - t1.clientY;
-            return Math.sqrt(dx*dx + dy*dy);
-          }
-
-          c2.addEventListener('touchstart', function(e){
-            if (e.touches && e.touches.length >= 2) {
-              pinchStartDist = tdist(e.touches[0], e.touches[1]);
-              pinchStartZoom = userZoom;
-            }
-            e.preventDefault();
-          }, {passive:false});
-
-          c2.addEventListener('touchmove', function(e){
-            if (e.touches && e.touches.length >= 2 && pinchStartDist > 0) {
-              var d = tdist(e.touches[0], e.touches[1]);
-              var ratio = d / pinchStartDist;
-              userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.2, 4.0);
-              applyZoom();
-            }
-            e.preventDefault();
-          }, {passive:false});
-
-          c2.addEventListener('touchend', function(e){
-            if (!e.touches || e.touches.length < 2) {
-              pinchStartDist = 0;
-            }
-            e.preventDefault();
-          }, {passive:false});
+          game.scale.setZoom(FIXED_ZOOM);
         }catch(e){}
       }
       window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
       setTimeout(onResize, 50);
-      setTimeout(applyZoom, 80);
+
 
       function preload(){
         // generate simple textures at runtime (no assets yet)
@@ -892,7 +838,7 @@ app.get('/game', async (req, res) => {
         var edgeR = this.add.rectangle(W-30, H/2, 30, H, 0x000000, 0.0).setOrigin(0,0.5).setScrollFactor(0);
 
         // UI hint
-        this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ใช้ 2 นิ้วถ่าง/หุบเพื่อซูม', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setOrigin(0.5,0).setScrollFactor(0);
+        this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setOrigin(0.5,0).setScrollFactor(0);
 
         var cam = this.cameras.main;
 
@@ -909,20 +855,6 @@ app.get('/game', async (req, res) => {
 
         // Update edge fades
         this.events.on('postupdate', function(){
-          try{
-            var p1 = this.input.pointer1;
-            var p2 = this.input.pointer2;
-            var p3 = this.input.pointer3;
-            var d = (p1 && p2 && p1.isDown && p2.isDown) ? Math.hypot(p1.x-p2.x, p1.y-p2.y) : 0;
-            dbgText.setText([
-              'p1:' + (p1 && p1.isDown ? 'down' : 'up') + ' ' + (p1? (p1.x.toFixed(0)+','+p1.y.toFixed(0)):'-'),
-              'p2:' + (p2 && p2.isDown ? 'down' : 'up') + ' ' + (p2? (p2.x.toFixed(0)+','+p2.y.toFixed(0)):'-'),
-              'dist:' + d.toFixed(1),
-              'userZoom:' + (typeof userZoom==='number'?userZoom.toFixed(2):String(userZoom)),
-              'scaleZoom:' + (this.sys.game.scale.zoom ? this.sys.game.scale.zoom.toFixed(2) : 'n/a'),
-              'touches:' + ((this.sys.game.canvas && this.sys.game.canvas.touches)? this.sys.game.canvas.touches.length : ''),
-            ]);
-          }catch(e){}
 
           var maxX = maxScrollX();
           var atL = maxX <= 0 ? 1 : (1 - Phaser.Math.Clamp(cam.scrollX / 24, 0, 1));
@@ -954,84 +886,6 @@ app.get('/game', async (req, res) => {
           if (p1 && p2 && p1.isDown && p2.isDown) return;
           var dx = pointer.x - startX;
           cam.scrollX = startScrollX - (dx / cam.zoom);
-          clampScroll();
-        }, this);
-
-
-        // Touch pinch fallback (iOS/standalone): some builds don't expose pointer2
-        try{
-          var canvasEl = this.sys.game.canvas;
-          var tPinch = { active:false, startDist:0, startZoom:1 };
-          function tdist(t0,t1){
-            var dx=t0.clientX-t1.clientX, dy=t0.clientY-t1.clientY;
-            return Math.sqrt(dx*dx+dy*dy);
-          }
-
-          canvasEl.addEventListener('touchstart', function(e){
-            if (e.touches && e.touches.length >= 2) {
-              tPinch.active = true;
-              tPinch.startDist = tdist(e.touches[0], e.touches[1]);
-              tPinch.startZoom = userZoom;
-              // prevent browser gesture only for 2-finger
-              e.preventDefault();
-            }
-          }, {passive:false});
-
-          canvasEl.addEventListener('touchmove', function(e){
-            if (!tPinch.active) return;
-            if (e.touches && e.touches.length >= 2 && tPinch.startDist > 0) {
-              var d = tdist(e.touches[0], e.touches[1]);
-              var ratio = d / tPinch.startDist;
-              userZoom = Phaser.Math.Clamp(tPinch.startZoom * ratio, 0.2, 4.0);
-              applyZoom();
-              clampScroll();
-              e.preventDefault();
-            }
-          }, {passive:false});
-
-          canvasEl.addEventListener('touchend', function(e){
-            if (!e.touches || e.touches.length < 2) tPinch.active = false;
-          }, {passive:true});
-        }catch(e){}
-
-        // Pinch zoom (2 fingers)
-        this.input.addPointer(2);
-        var pinchActive = false;
-        var pinchStartDist = 0;
-        var pinchStartZoom = 1;
-
-        function dist(a,b){
-          var dx=a.x-b.x, dy=a.y-b.y;
-          return Math.sqrt(dx*dx+dy*dy);
-        }
-
-        this.input.on('pointerdown', function(){
-          var p1 = this.input.pointer1;
-          var p2 = this.input.pointer2;
-          if (p1 && p2 && p1.isDown && p2.isDown) {
-            pinchActive = true;
-            pinchStartDist = dist(p1,p2);
-            pinchStartZoom = userZoom;
-            isPanning = false;
-          }
-        }, this);
-
-        this.input.on('pointerup', function(){
-          var p1 = this.input.pointer1;
-          var p2 = this.input.pointer2;
-          if (!(p1 && p2 && p1.isDown && p2.isDown)) pinchActive = false;
-        }, this);
-
-        this.input.on('pointermove', function(){
-          if (!pinchActive) return;
-          var p1 = this.input.pointer1;
-          var p2 = this.input.pointer2;
-          if (!(p1 && p2 && p1.isDown && p2.isDown)) return;
-          var d = dist(p1,p2);
-          if (!pinchStartDist) return;
-          var ratio = d / pinchStartDist;
-          userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.2, 4.0);
-          applyZoom();
           clampScroll();
         }, this);
       }
