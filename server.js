@@ -763,9 +763,7 @@ app.get('/admin/partners', async (req, res) => {
           elTitle.textContent = r.name;
           elName.value = r.name || '';
           elNote.value = r.note || '';
-          if (elCust) elCust.value = r.customer_token || '';
           if (elCustLabel) elCustLabel.value = r.customer_label || '';
-          if (elPartner) elPartner.value = r.partner_id ? String(r.partner_id) : '';
           if (elPartnerName) elPartnerName.value = r.partner_name || '';
           elEnabled.value = String(r.enabled ? 1 : 0);
           elDt.value = r.default_receiving_time_id ? String(r.default_receiving_time_id) : '';
@@ -937,26 +935,14 @@ app.get('/admin/cash', async (req, res) => {
         <div style="height:10px"></div>
         <div class="row">
           <div id="wrap_new_customer">
-            <div class="muted">รับจาก (ลูกค้า)</div>
-            <select name="customer_token" id="new_cash_customer">
-              <option value="">(พิมพ์ชื่อเอง)</option>
-              ${customers.map(c=>`<option value="${escapeHtml(c.token)}">${escapeHtml(c.label)}</option>`).join('')}
-            </select>
-            <div style="height:6px"></div>
-            <input name="customer_label" id="new_cash_customer_label" placeholder="ชื่อลูกค้า (ถ้าไม่ได้เลือกจากลิสต์)" />
+            <div class="muted">รับจาก (ลูกค้า)</div><input name="customer_label" id="new_cash_customer_label" placeholder="ชื่อลูกค้า (ถ้าไม่ได้เลือกจากลิสต์)" />
           </div>
           <div>
             <div class="muted">หมายเหตุ</div>
             <input name="note" placeholder="เช่น ซื้อหมูบด" />
           </div>
           <div id="wrap_new_partner">
-            <div class="muted">จ่ายให้ (พาร์ทเนอร์)</div>
-            <select name="partner_id" id="new_cash_partner">
-              <option value="">(พิมพ์ชื่อเอง)</option>
-              ${partners.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('')}
-            </select>
-            <div style="height:6px"></div>
-            <input name="partner_name" id="new_cash_partner_name" placeholder="ชื่อผู้รับเงิน (ถ้าไม่ได้เลือกจากลิสต์)" />
+            <div class="muted">จ่ายให้ (พาร์ทเนอร์)</div><input name="partner_name" id="new_cash_partner_name" placeholder="ชื่อผู้รับเงิน (ถ้าไม่ได้เลือกจากลิสต์)" />
           </div>
         </div>
 
@@ -999,26 +985,14 @@ app.get('/admin/cash', async (req, res) => {
           <div style="height:10px"></div>
           <div class="row">
             <div id="wrap_cash_customer">
-              <div class="muted">รับจาก (ลูกค้า)</div>
-              <select name="customer_token" id="cash_customer">
-                <option value="">(พิมพ์ชื่อเอง)</option>
-                ${customers.map(c=>`<option value="${escapeHtml(c.token)}">${escapeHtml(c.label)}</option>`).join('')}
-              </select>
-              <div style="height:6px"></div>
-              <input name="customer_label" id="cash_customer_label" />
+              <div class="muted">รับจาก (ลูกค้า)</div><input name="customer_label" id="cash_customer_label" />
             </div>
             <div>
               <div class="muted">หมายเหตุ</div>
               <input name="note" id="cash_note" />
             </div>
             <div id="wrap_cash_partner">
-              <div class="muted">จ่ายให้ (พาร์ทเนอร์)</div>
-              <select name="partner_id" id="cash_partner">
-                <option value="">(พิมพ์ชื่อเอง)</option>
-                ${partners.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('')}
-              </select>
-              <div style="height:6px"></div>
-              <input name="partner_name" id="cash_partner_name" />
+              <div class="muted">จ่ายให้ (พาร์ทเนอร์)</div><input name="partner_name" id="cash_partner_name" />
             </div>
           </div>
 
@@ -1073,9 +1047,7 @@ app.get('/admin/cash', async (req, res) => {
         var elType = document.getElementById('cash_type');
         var elAmt = document.getElementById('cash_amount');
         var elNote = document.getElementById('cash_note');
-        var elCust = document.getElementById('cash_customer');
         var elCustLabel = document.getElementById('cash_customer_label');
-        var elPartner = document.getElementById('cash_partner');
         var elPartnerName = document.getElementById('cash_partner_name');
 
         function toggleCashType(t){
@@ -1084,9 +1056,7 @@ app.get('/admin/cash', async (req, res) => {
           var wrapP = document.getElementById('wrap_cash_partner');
           if (wrapC) wrapC.style.opacity = isIncome ? '1' : '0.5';
           if (wrapP) wrapP.style.opacity = isIncome ? '0.5' : '1';
-          if (elCust) elCust.disabled = !isIncome;
           if (elCustLabel) elCustLabel.disabled = !isIncome;
-          if (elPartner) elPartner.disabled = isIncome;
           if (elPartnerName) elPartnerName.disabled = isIncome;
         }
 
@@ -1101,9 +1071,7 @@ app.get('/admin/cash', async (req, res) => {
           var lab = document.getElementById('new_cash_type_label');
           var wrapC = document.getElementById('wrap_new_customer');
           var wrapP = document.getElementById('wrap_new_partner');
-          var selC = document.getElementById('new_cash_customer');
           var inC = document.getElementById('new_cash_customer_label');
-          var selP = document.getElementById('new_cash_partner');
           var inP = document.getElementById('new_cash_partner_name');
 
           if (inp) inp.value = (t==='expense'?'expense':'income');
@@ -1112,17 +1080,13 @@ app.get('/admin/cash', async (req, res) => {
           var isIncome = (t !== 'expense');
           if (wrapC) wrapC.style.opacity = isIncome ? '1' : '0.5';
           if (wrapP) wrapP.style.opacity = isIncome ? '0.5' : '1';
-          if (selC) selC.disabled = !isIncome;
           if (inC) inC.disabled = !isIncome;
-          if (selP) selP.disabled = isIncome;
           if (inP) inP.disabled = isIncome;
 
           // Clear the other side to avoid accidental mixed data
           if (isIncome) {
-            if (selP) selP.value = '';
             if (inP) inP.value = '';
           } else {
-            if (selC) selC.value = '';
             if (inC) inC.value = '';
           }
         }
@@ -1141,9 +1105,7 @@ app.get('/admin/cash', async (req, res) => {
           toggleCashType(r.type);
           elAmt.value = String(r.amount||0);
           elNote.value = r.note || '';
-          if (elCust) elCust.value = r.customer_token || '';
           if (elCustLabel) elCustLabel.value = r.customer_label || '';
-          if (elPartner) elPartner.value = r.partner_id ? String(r.partner_id) : '';
           if (elPartnerName) elPartnerName.value = r.partner_name || '';
           elDate.value = String(r.entry_date).slice(0,10);
           openDlg(dlgD);
@@ -1161,7 +1123,7 @@ app.get('/admin/cash', async (req, res) => {
 
 app.post('/admin/cash/create', async (req, res) => {
   if (!requireAdmin(req, res)) return;
-  const { type, amount, note, entry_date, customer_token, customer_label, partner_id, partner_name } = req.body || {};
+  const { type, amount, note, entry_date, customer_label, partner_name } = req.body || {};
   const tp = (type === 'income' || type === 'expense') ? type : null;
   const amt = Number(amount);
   const cat = '';
@@ -1172,9 +1134,9 @@ app.post('/admin/cash/create', async (req, res) => {
   if (!Number.isFinite(amt) || amt <= 0) return redirectAdminTo(res, '/admin/cash', 'จำนวนเงินไม่ถูกต้อง');
     if (!d) return redirectAdminTo(res, '/admin/cash', 'วันที่หาย');
 
-  const custTok = String(customer_token || '').trim();
+  const custTok = '';
   const custLabel = String(customer_label || '').trim();
-  const partnerId = partner_id ? Number(partner_id) : null;
+  const partnerId = null;
   const partnerName = String(partner_name || '').trim();
 
   // Validation rules:
@@ -1198,7 +1160,7 @@ app.post('/admin/cash/create', async (req, res) => {
 
 app.post('/admin/cash/update', async (req, res) => {
   if (!requireAdmin(req, res)) return;
-  const { id, type, amount, note, entry_date, customer_token, customer_label, partner_id, partner_name } = req.body || {};
+  const { id, type, amount, note, entry_date, customer_label, partner_name } = req.body || {};
   const cid = Number(id);
   const tp = (type === 'income' || type === 'expense') ? type : null;
   const amt = Number(amount);
@@ -1211,9 +1173,9 @@ app.post('/admin/cash/update', async (req, res) => {
   if (!Number.isFinite(amt) || amt <= 0) return redirectAdminTo(res, '/admin/cash', 'จำนวนเงินไม่ถูกต้อง');
     if (!d) return redirectAdminTo(res, '/admin/cash', 'วันที่หาย');
 
-  const custTok = String(customer_token || '').trim();
+  const custTok = '';
   const custLabel = String(customer_label || '').trim();
-  const partnerId = partner_id ? Number(partner_id) : null;
+  const partnerId = null;
   const partnerName = String(partner_name || '').trim();
 
   // Validation rules:
