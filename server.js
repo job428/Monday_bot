@@ -609,7 +609,7 @@ app.get('/game', async (req, res) => {
 <html lang="th">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <title>Veg Shop (Prototype)</title>
   <style>
     body{margin:0;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
@@ -617,7 +617,8 @@ app.get('/game', async (req, res) => {
     .top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
     a{color:#9ae6b4;text-decoration:none}
     .hint{color:#b7c0cc;font-size:12px}
-    #game{flex:1;min-height:0;border:1px solid #243041;border-radius:14px;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center}
+    #game{flex:1;min-height:0;border:1px solid #243041;border-radius:14px;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center;touch-action:none}
+    #game canvas{touch-action:none}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
@@ -654,6 +655,9 @@ app.get('/game', async (req, res) => {
         width: W,
         height: H,
         pixelArt: true,
+        input: {
+          activePointers: 3
+        },
         scale: {
           mode: Phaser.Scale.ENVELOP,
           autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -679,6 +683,13 @@ app.get('/game', async (req, res) => {
           z = Math.max(0.5, Math.min(6, Math.round(z * 4) / 4));
           game.scale.setZoom(z);
         }catch(e){}
+
+        // iOS Safari: prevent browser pinch/scroll gestures on the canvas
+        try{
+          var c2 = this.sys.game.canvas;
+          c2.addEventListener('touchstart', function(e){ e.preventDefault(); }, {passive:false});
+          c2.addEventListener('touchmove', function(e){ e.preventDefault(); }, {passive:false});
+        }catch(e){}
       }
 
       function onResize(){
@@ -687,6 +698,13 @@ app.get('/game', async (req, res) => {
           game.scale.resize(W, H);
           baseZoom = Math.max(s.w / W, s.h / H);
           applyZoom();
+        }catch(e){}
+
+        // iOS Safari: prevent browser pinch/scroll gestures on the canvas
+        try{
+          var c2 = this.sys.game.canvas;
+          c2.addEventListener('touchstart', function(e){ e.preventDefault(); }, {passive:false});
+          c2.addEventListener('touchmove', function(e){ e.preventDefault(); }, {passive:false});
         }catch(e){}
       }
       window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
@@ -745,6 +763,13 @@ app.get('/game', async (req, res) => {
           var c = this.sys.game.canvas;
           c.style.imageRendering = 'pixelated';
           c.style.imageRendering = 'crisp-edges';
+        }catch(e){}
+
+        // iOS Safari: prevent browser pinch/scroll gestures on the canvas
+        try{
+          var c2 = this.sys.game.canvas;
+          c2.addEventListener('touchstart', function(e){ e.preventDefault(); }, {passive:false});
+          c2.addEventListener('touchmove', function(e){ e.preventDefault(); }, {passive:false});
         }catch(e){}
 
         var tile = 16;
@@ -853,7 +878,7 @@ app.get('/game', async (req, res) => {
         }, this);
 
         // Pinch zoom (2 fingers)
-        this.input.addPointer(1);
+        this.input.addPointer(2);
         var pinchActive = false;
         var pinchStartDist = 0;
         var pinchStartZoom = 1;
