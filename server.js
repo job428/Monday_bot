@@ -675,7 +675,7 @@ app.get('/game', async (req, res) => {
 
       var game = new Phaser.Game(config);
       // Zoom architecture (scale-only): baseZoom (default far) * userZoom (pinch)
-      var baseZoom = 0.25;
+      var baseZoom = 1.0;
       var userZoom = 1.0;
 
       function applyZoom(){
