@@ -630,7 +630,7 @@ app.get('/game', async (req, res) => {
         <div style="font-weight:900;font-size:18px">ร้านขายผัก (ห้องเปล่า ๆ)</div>
         <div class="hint">Prototype: ฉากนิ่งสไตล์พิกเซล (ยังไม่ต้องเดิน) · ต่อไปค่อยเพิ่มลากวาง/แอนิเมชัน</div>
       </div>
-      <div class="hint"><a href="/admin?token=${escapeHtml(ADMIN_TOKEN)}">กลับหน้าแอดมิน</a></div>
+      <div class="hint" style="display:flex;gap:10px;align-items:center"><button id="btnRefresh" type="button" style="padding:8px 10px;border-radius:10px;border:1px solid #2a3a52;background:#111;color:#fff;font-weight:800">รีเฟรช</button><a href="/admin?token=${escapeHtml(ADMIN_TOKEN)}">กลับหน้าแอดมิน</a></div>
     </div>
 
     <div id="game"></div>
@@ -638,6 +638,9 @@ app.get('/game', async (req, res) => {
 
   <script>
     (function(){
+      var br = document.getElementById('btnRefresh');
+      if (br) br.addEventListener('click', function(){ location.reload(); });
+
       // Pixel-art feel: low resolution internal canvas + no smoothing.
       var W = 320, H = 180; // internal resolution
 
