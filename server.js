@@ -845,66 +845,123 @@ app.get('/admin/customers', async (req, res) => {
       </form>
     </dialog>
 
-    <table>
-      <thead>
-        <tr>
-          <th>ลูกค้า</th>
-          <th>กลุ่ม</th>
-          <th>เวลาส่งเริ่มต้น</th>
-          <th>การจัดการ</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${customers.map(c => {
-          const link = `${BASE_URL}/c/${c.token}`;
-          const groupName = c.group_name ? escapeHtml(c.group_name) : '-';
-          const dt = deliveryTimes.find(x => Number(x.id) === Number(c.default_delivery_time_id||0));
-          const dtLabel = dt ? `${escapeHtml(dt.name)}${dt.time_hm ? ' ('+escapeHtml(dt.time_hm)+')' : ''}` : '-';
-          const disabledBadge = c.enabled ? '' : '<span class="pill" style="background:#f2f2f2;color:#111">disabled</span>';
-          return `
-          <tr>
-            <td><b>${escapeHtml(c.label)}</b> ${disabledBadge}<div class="muted">${escapeHtml(c.token)}</div></td>
-            <td>${groupName}</td>
-            <td>${dtLabel}</td>
-            <td>
-              <div class="actions" style="justify-content:flex-end">
-                <a class="muted" href="${escapeHtml(link)}" target="_blank" rel="noopener" style="padding:10px 12px;border-radius:12px;border:1px solid #ddd;text-decoration:none">เปิดลิงก์</a>
-                <button type="button" class="secondary" onclick="window.copyText && window.copyText('${escapeHtml(link)}').then(ok=>{ if(ok) alert('คัดลอกลิงก์แล้ว'); })">คัดลอกลิงก์</button>
-                <a class="muted" href="/admin/customer-prices?token=${escapeHtml(ADMIN_TOKEN)}&customerToken=${escapeHtml(c.token)}" style="padding:10px 12px;border-radius:12px;border:1px solid #ddd;text-decoration:none">ตั้งราคา</a>
-                <button type="button" class="secondary" onclick="openEditCustomer(${escapeHtml(JSON.stringify(c.token))}, ${escapeHtml(JSON.stringify(c.label))}, ${escapeHtml(JSON.stringify(c.note||''))}, ${escapeHtml(JSON.stringify(c.group_id||''))}, ${c.enabled ? '1':'0'}, ${c.use_group_price ? '1':'0'}, ${c.default_delivery_time_id ? JSON.stringify(c.default_delivery_time_id) : 'null'})">แก้ไข</button>
-                <form method="post" action="/admin/customer/delete?token=${escapeHtml(ADMIN_TOKEN)}" onsubmit="return confirm('ลบลูกค้าคนนี้?')" style="margin:0">
-                  <input type="hidden" name="customerToken" value="${escapeHtml(c.token)}" />
-                  <button type="submit" class="danger">ลบ</button>
-                </form>
-              </div>
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>
+    <div class="card" style="padding:0">
+      ${customers.map(c => {
+        const disabledBadge = c.enabled ? '' : '<span class="pill" style="background:#f2f2f2;color:#111">disabled</span>';
+        return `
+          <button type="button" class="secondary" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px" onclick="openCustomerDetail(${escapeHtml(JSON.stringify(c.token))})">
+            <div class="actions" style="justify-content:space-between;align-items:center">
+              <div><b>${escapeHtml(c.label)}</b> ${disabledBadge}</div>
+              <div class="muted">→</div>
+            </div>
+          </button>
+        `;
+      }).join('')}
+    </div>
+
+    <dialog id="dlgCustomerDetail" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+      <div class="card" style="border:none;margin:0">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0" id="custDetailTitle">รายละเอียดลูกค้า</h3>
+          <button type="button" class="secondary" id="btnCloseCustDetail">ปิด</button>
+        </div>
+        <div class="muted" id="custDetailToken" style="margin-top:6px"></div>
+
+        <div style="height:12px"></div>
+        <div class="card" style="margin:0">
+          <div class="muted">กลุ่ม</div>
+          <div id="custDetailGroup" style="font-weight:800"></div>
+          <div style="height:10px"></div>
+          <div class="muted">เวลาส่งเริ่มต้น</div>
+          <div id="custDetailDefaultDt" style="font-weight:800"></div>
+          <div style="height:10px"></div>
+          <div class="muted">หมายเหตุ</div>
+          <div id="custDetailNote" class="muted"></div>
+        </div>
+
+        <div style="height:12px"></div>
+        <div class="actions" style="justify-content:flex-end">
+          <a class="muted" id="custDetailOpenLink" target="_blank" rel="noopener" style="padding:10px 12px;border-radius:12px;border:1px solid #ddd;text-decoration:none">เปิดลิงก์</a>
+          <button type="button" class="secondary" id="custDetailCopyLink">คัดลอกลิงก์</button>
+          <a class="muted" id="custDetailPrices" style="padding:10px 12px;border-radius:12px;border:1px solid #ddd;text-decoration:none">ตั้งราคา</a>
+          <button type="button" class="secondary" id="custDetailEdit">แก้ไข</button>
+          <form method="post" action="/admin/customer/delete?token=${escapeHtml(ADMIN_TOKEN)}" onsubmit="return confirm('ลบลูกค้าคนนี้?')" style="margin:0">
+            <input type="hidden" name="customerToken" id="custDetailDeleteTok" />
+            <button type="submit" class="danger">ลบ</button>
+          </form>
+        </div>
+      </div>
+    </dialog>
 
     <script>
       (function(){
+        var customers = ${escapeHtml(JSON.stringify(customers))};
+        var deliveryTimes = ${escapeHtml(JSON.stringify(deliveryTimes))};
+        var byTok = new Map(customers.map(c => [c.token, c]));
+
+        var dlgD = document.getElementById('dlgCustomerDetail');
+        var btnCloseD = document.getElementById('btnCloseCustDetail');
+        var elTitle = document.getElementById('custDetailTitle');
+        var elTok = document.getElementById('custDetailToken');
+        var elGroup = document.getElementById('custDetailGroup');
+        var elDt = document.getElementById('custDetailDefaultDt');
+        var elNote = document.getElementById('custDetailNote');
+        var aOpen = document.getElementById('custDetailOpenLink');
+        var btnCopy = document.getElementById('custDetailCopyLink');
+        var aPrices = document.getElementById('custDetailPrices');
+        var btnEdit = document.getElementById('custDetailEdit');
+        var delTok = document.getElementById('custDetailDeleteTok');
+
+        function openDlg(d){ if(d && d.showModal) d.showModal(); else if(d) d.setAttribute('open','open'); }
+        function closeDlg(d){ if(d && d.close) d.close(); else if(d) d.removeAttribute('open'); }
+
+        window.openCustomerDetail = function(token){
+          var c = byTok.get(token);
+          if(!c) return;
+          elTitle.textContent = c.label || 'ลูกค้า';
+          elTok.textContent = 'token: ' + c.token;
+          elGroup.textContent = c.group_name || '-';
+          var dt = deliveryTimes.find(x => Number(x.id) === Number(c.default_delivery_time_id||0));
+          elDt.textContent = dt ? (dt.name + (dt.time_hm ? (' ('+dt.time_hm+')') : '')) : '-';
+          elNote.textContent = c.note || '-';
+
+          var link = ${escapeHtml(JSON.stringify(BASE_URL))} + '/c/' + c.token;
+          aOpen.href = link;
+          btnCopy.onclick = function(){
+            if(window.copyText) window.copyText(link).then(ok=>{ if(ok) alert('คัดลอกลิงก์แล้ว'); });
+          };
+          aPrices.href = '/admin/customer-prices?token=${escapeHtml(ADMIN_TOKEN)}&customerToken=' + encodeURIComponent(c.token);
+          btnEdit.onclick = function(){
+            closeDlg(dlgD);
+            openEditCustomer(c.token, c.label, c.note||'', c.group_id||'', c.enabled?1:0, c.use_group_price?1:0, c.default_delivery_time_id||null);
+          };
+          delTok.value = c.token;
+
+          openDlg(dlgD);
+        };
+
+        if(btnCloseD) btnCloseD.addEventListener('click', function(){ closeDlg(dlgD); });
+
         var btn = document.getElementById('btnNewCustomer');
         var dlg = document.getElementById('dlgNewCustomer');
         var close1 = document.getElementById('btnCloseNewCustomer');
         var close2 = document.getElementById('btnCancelNewCustomer');
         if(btn && dlg){
-          function openDlg(){ if(dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','open'); }
-          function closeDlg(){ if(dlg.close) dlg.close(); else dlg.removeAttribute('open'); }
-          btn.addEventListener('click', openDlg);
-          if(close1) close1.addEventListener('click', closeDlg);
-          if(close2) close2.addEventListener('click', closeDlg);
+          function openDlgNew(){ if(dlg.showModal) dlg.showModal(); else dlg.setAttribute('open','open'); }
+          function closeDlgNew(){ if(dlg.close) dlg.close(); else dlg.removeAttribute('open'); }
+          btn.addEventListener('click', openDlgNew);
+          if(close1) close1.addEventListener('click', closeDlgNew);
+          if(close2) close2.addEventListener('click', closeDlgNew);
         }
 
         var dlg2 = document.getElementById('dlgEditCustomer');
         var closeE1 = document.getElementById('btnCloseEditCustomer');
         var closeE2 = document.getElementById('btnCancelEditCustomer');
-        var elTok = document.getElementById('edit_customerToken');
+        var elTok2 = document.getElementById('edit_customerToken');
         var elShow = document.getElementById('edit_token_show');
         var elLabel = document.getElementById('edit_label');
-        var elNote = document.getElementById('edit_note');
-        var elGroup = document.getElementById('edit_group');
+        var elNote2 = document.getElementById('edit_note');
+        var elGroup2 = document.getElementById('edit_group');
         var elEnabled = document.getElementById('edit_enabled');
         var elDefault = document.getElementById('edit_default_delivery_time');
 
@@ -912,12 +969,12 @@ app.get('/admin/customers', async (req, res) => {
         function closeEDlg(){ if(dlg2 && dlg2.close) dlg2.close(); else if(dlg2) dlg2.removeAttribute('open'); }
 
         window.openEditCustomer = function(token, label, note, groupId, enabled, useGroupPrice, defaultDeliveryTimeId){
-          elTok.value = token;
+          elTok2.value = token;
           elShow.textContent = 'token: ' + token;
           elLabel.value = label || '';
-          elNote.value = note || '';
+          elNote2.value = note || '';
           elEnabled.value = String(enabled||'1');
-          elGroup.value = (groupId===null||groupId===undefined)?'':String(groupId);
+          elGroup2.value = (groupId===null||groupId===undefined)?'':String(groupId);
           if (elDefault) elDefault.value = (defaultDeliveryTimeId===null||defaultDeliveryTimeId===undefined)?'':String(defaultDeliveryTimeId);
           openEDlg();
         };
@@ -930,6 +987,53 @@ app.get('/admin/customers', async (req, res) => {
   `;
 
   res.type('html').send(adminLayout({ title: 'ลูกค้า', active: 'customers', msg, body }));
+});
+
+app.post('/admin/customer/create', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  let { customerToken, label, note, enabled, group_id, use_group_price, default_delivery_time_id } = req.body || {};
+  const useGroup = String(use_group_price) === '1' ? 1 : 0;
+  const defaultDtId = default_delivery_time_id ? Number(default_delivery_time_id) : null;
+
+  customerToken = String(customerToken || '').trim();
+  label = String(label || '').trim();
+  note = String(note || '').trim();
+  enabled = String(enabled) === '0' ? 0 : 1;
+  const gid = group_id ? Number(group_id) : null;
+
+  if (!label) return redirectAdminTo(res, '/admin/customers', 'label หาย');
+
+  customerToken = String(customerToken || '').trim();
+  if (!customerToken) customerToken = nanoid(10);
+
+  const p = await db();
+  try {
+    await p.execute(
+      'INSERT INTO customers(token,label,note,enabled,group_id,use_group_price,default_delivery_time_id) VALUES (?,?,?,?,?,?,?)',
+      [customerToken, label, note, enabled, gid, useGroup, defaultDtId]
+    );
+  } catch (e) {
+    console.error(e);
+    return redirectAdminTo(res, '/admin/customers', 'เพิ่มลูกค้าไม่สำเร็จ (token ซ้ำ?)');
+  }
+  return redirectAdminTo(res, '/admin/customers', 'เพิ่มลูกค้าแล้ว');
+});
+
+app.post('/admin/customer/update', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { customerToken, label, note, enabled, group_id, use_group_price, default_delivery_time_id } = req.body || {};
+  const useGroup = String(use_group_price) === '1' ? 1 : 0;
+  const defaultDtId = default_delivery_time_id ? Number(default_delivery_time_id) : null;
+
+  const tok = String(customerToken || '').trim();
+  if (!tok) return redirectAdminTo(res, '/admin/customers', 'token หาย');
+
+  const p = await db();
+  await p.execute(
+    'UPDATE customers SET label=?, note=?, enabled=?, group_id=?, use_group_price=?, default_delivery_time_id=? WHERE token=?',
+    [String(label||'').trim(), String(note||'').trim(), String(enabled)==='0'?0:1, group_id?Number(group_id):null, useGroup, defaultDtId, tok]
+  );
+  return redirectAdminTo(res, '/admin/customers', 'บันทึกแล้ว');
 });
 
 app.post('/admin/customer/create', async (req, res) => {
