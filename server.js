@@ -823,6 +823,25 @@ app.get('/game', async (req, res) => {
             if (!e.touches || e.touches.length < 2) pinchStartDist = 0;
             e.preventDefault();
           }, {passive:false});
+
+          // iOS fallback: gesture events (some A2HS builds prefer this)
+          var gStartZoom = 1;
+          c2.addEventListener('gesturestart', function(e){
+            try{ gStartZoom = userZoom; }catch(_){}
+            e.preventDefault();
+          }, {passive:false});
+          c2.addEventListener('gesturechange', function(e){
+            try{
+              if (typeof e.scale === 'number') {
+                userZoom = Phaser.Math.Clamp(gStartZoom * e.scale, 0.75, 2.5);
+                applyZoom();
+              }
+            }catch(_){}
+            e.preventDefault();
+          }, {passive:false});
+          c2.addEventListener('gestureend', function(e){
+            e.preventDefault();
+          }, {passive:false});
         }catch(e){}
 
 
