@@ -888,7 +888,7 @@ app.get('/game', async (req, res) => {
               pinch.startDist = tdist(e.touches[0], e.touches[1]);
               pinch.startZoom = userZoom;
               // stop panning while pinching
-              isPanning = false;
+              try{ if (typeof isPanning !== 'undefined') isPanning = false; }catch(_){}
               e.preventDefault();
             }
           }, {passive:false});
@@ -930,6 +930,7 @@ app.get('/game', async (req, res) => {
         this.input.on('pointerout', function(){ isPanning = false; });
         this.input.on('pointermove', function(pointer){
           if(!isPanning) return;
+          try{ if (typeof pinch !== 'undefined' && pinch.active) return; }catch(_){}
           // if more than 1 pointer down, let pinch handler manage
           var p1 = this.input.pointer1;
           var p2 = this.input.pointer2;
