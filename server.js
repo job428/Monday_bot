@@ -1152,7 +1152,7 @@ app.get('/admin/veggies', async (req, res) => {
     <div class="card" style="padding:0">
       ${veggies.map(v => {
         return `
-          <div role="button" tabindex="0" class="secondary vegCard" data-veg-id="${escapeHtml(v.id)}" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px;touch-action:manipulation">
+          <button type="button" class="secondary" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px" onclick="openVegDetail(${escapeHtml(JSON.stringify(v.id))})">
             <div class="actions" style="justify-content:space-between;align-items:center">
               <div>
                 <div><b>${escapeHtml(v.name)}</b> <span class="muted">${escapeHtml(v.unit||'')}</span></div>
@@ -1160,7 +1160,7 @@ app.get('/admin/veggies', async (req, res) => {
               </div>
               <div class="muted">→</div>
             </div>
-          </div>
+          </button>
         `;
       }).join('')}
     </div>
@@ -1281,15 +1281,6 @@ app.get('/admin/veggies', async (req, res) => {
           delId.value = v.id;
           openDlg(dlgD);
         };
-
-        // bind cards (use Pointer Events to avoid iOS ghost-clicks)
-        document.querySelectorAll('.vegCard[data-veg-id]').forEach(function(el){
-          el.addEventListener('pointerup', function(e){
-            if(e){ e.preventDefault(); e.stopPropagation(); }
-            var id = el.getAttribute('data-veg-id');
-            window.openVegDetail(id);
-          });
-        });
 
         if(btnClose) btnClose.addEventListener('click', function(){ closeDlg(dlgD); });
       })();
