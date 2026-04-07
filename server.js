@@ -389,8 +389,9 @@ app.get('/admin/orders', async (req, res) => {
   const status = (req.query.status || '').toString().trim();
   const filterStatus = (status === 'new' || status === 'canceled' || status === 'sent') ? status : 'new';
 
-  const dateTab = (req.query.date || '').toString().trim();
-  const dateFilter = (dateTab === 'today') ? bangkokYmd(new Date()) : (dateTab === 'tomorrow') ? bangkokAddDaysYmd(1) : null;
+  // default date tab = today (no URL redirect; purely server-side default)
+  const dateTab = ((req.query.date || '').toString().trim() || 'today');
+  const dateFilter = (dateTab === 'today') ? bangkokYmd(new Date()) : (dateTab === 'tomorrow') ? bangkokAddDaysYmd(1) : bangkokYmd(new Date());
 
   const orders = await getOrders({ limit: 500, status: filterStatus, deliveryDate: dateFilter });
 
