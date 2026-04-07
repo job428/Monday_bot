@@ -111,6 +111,9 @@ async function db() {
 // --- data access ---
 async function getDeliveryTimes() {
   const p = await db();
+
+  const customers = await getAllCustomers();
+  const [partners] = await p.query('SELECT id,name,enabled FROM partners WHERE enabled=1 ORDER BY name ASC');
   const [rows] = await p.query('SELECT id,name,time_hm,days_mask,enabled FROM delivery_times ORDER BY id ASC');
   return rows;
 }
@@ -245,6 +248,7 @@ function adminNav(active) {
     ${link('/admin/veggies', 'ผัก', 'veggies')}
     ${link('/admin/delivery-times', 'เวลาส่ง', 'delivery')}
     ${link('/admin/cash', 'รายรับรายจ่าย', 'cash')}
+    ${link('/admin/partners', 'พาร์ทเนอร์', 'partners')}
   </div>`;
 }
 
@@ -593,19 +597,240 @@ app.get('/admin/orders', async (req, res) => {
   res.type('html').send(adminLayout({ title: 'ออเดอร์', active: 'orders', msg: req.query.msg ? String(req.query.msg) : '', body }));
 });
 
+
+
+// --- admin partners (ผู้รับเงิน/ผู้ขายของ) ---
+app.get('/admin/partners', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const p = await db();
+  const [partners] = await p.query('SELECT id,name,note,enabled,default_receiving_time_id FROM partners ORDER BY id DESC');
+  const [deliveryTimes] = await p.query('SELECT id,name,time_hm FROM delivery_times ORDER BY id ASC');
+
+  const deliveryOptions = ['<option value="">(ไม่ตั้งค่า)</option>'].concat(
+    deliveryTimes.map(d => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}${d.time_hm ? ' ('+escapeHtml(d.time_hm)+')' : ''}</option>`)
+  ).join('');
+
+  const msg = req.query.msg ? String(req.query.msg) : '';
+
+  const body = `
+  <div class="card">
+    <div class="actions" style="justify-content:space-between;align-items:center">
+      <div>
+        <h2 style="margin:0">จัดการพาร์ทเนอร์</h2>
+        <div class="muted">สำหรับรายจ่าย: จ่ายให้ใคร / เวลารับของเริ่มต้น</div>
+      </div>
+      <button type="button" id="btnNewPartner">+ เพิ่มพาร์ทเนอร์</button>
+    </div>
+
+    <div style="height:12px"></div>
+
+    <div class="card" style="padding:0">
+      ${partners.map(r => {
+        const badge = r.enabled ? '' : '<span class="pill" style="background:#f2f2f2;color:#111">off</span>';
+        const dt = deliveryTimes.find(x => Number(x.id) === Number(r.default_receiving_time_id||0));
+        const dtLabel = dt ? `${escapeHtml(dt.name)}${dt.time_hm ? ' ('+escapeHtml(dt.time_hm)+')' : ''}` : '';
+        return `
+          <button type="button" class="secondary" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px" onclick="openPartnerDetail(${escapeHtml(JSON.stringify(r.id))})">
+            <div class="actions" style="justify-content:space-between;align-items:center">
+              <div>
+                <div><b>${escapeHtml(r.name)}</b> ${badge}</div>
+                <div class="muted">${dtLabel || ' '}</div>
+              </div>
+              <div class="muted">→</div>
+            </div>
+          </button>
+        `;
+      }).join('')}
+    </div>
+
+    <dialog id="dlgNewPartner" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+      <form method="post" action="/admin/partner/create?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">เพิ่มพาร์ทเนอร์</h3>
+          <button type="button" class="secondary" id="btnCloseNewPartner">ปิด</button>
+        </div>
+
+        <div style="height:12px"></div>
+        <div class="row">
+          <div>
+            <div class="muted">ชื่อ (ห้ามซ้ำ)</div>
+            <input name="name" required />
+          </div>
+          <div>
+            <div class="muted">เปิดใช้งาน</div>
+            <select name="enabled"><option value="1" selected>on</option><option value="0">off</option></select>
+          </div>
+        </div>
+
+        <div style="height:10px"></div>
+        <div>
+          <div class="muted">เวลารับของเริ่มต้น</div>
+          <select name="default_receiving_time_id">${deliveryOptions}</select>
+        </div>
+
+        <div style="height:10px"></div>
+        <div>
+          <div class="muted">หมายเหตุ</div>
+          <input name="note" />
+        </div>
+
+        <div style="height:14px"></div>
+        <div class="actions" style="justify-content:flex-end">
+          <button type="button" class="secondary" id="btnCancelNewPartner">ยกเลิก</button>
+          <button type="submit">เพิ่ม</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlgPartnerDetail" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+      <div class="card" style="border:none;margin:0">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0" id="partnerTitle">รายละเอียด</h3>
+          <button type="button" class="secondary" id="btnClosePartnerDetail">ปิด</button>
+        </div>
+
+        <form method="post" action="/admin/partner/update?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+          <input type="hidden" name="id" id="partner_id" />
+
+          <div style="height:12px"></div>
+          <div>
+            <div class="muted">ชื่อ (ห้ามซ้ำ)</div>
+            <input name="name" id="partner_name" required />
+          </div>
+          <div style="height:10px"></div>
+          <div>
+            <div class="muted">เวลารับของเริ่มต้น</div>
+            <select name="default_receiving_time_id" id="partner_dt">${deliveryOptions}</select>
+          </div>
+          <div style="height:10px"></div>
+          <div>
+            <div class="muted">เปิดใช้งาน</div>
+            <select name="enabled" id="partner_enabled"><option value="1">on</option><option value="0">off</option></select>
+          </div>
+          <div style="height:10px"></div>
+          <div>
+            <div class="muted">หมายเหตุ</div>
+            <input name="note" id="partner_note" />
+          </div>
+
+          <div style="height:14px"></div>
+          <div class="actions" style="justify-content:flex-end">
+            <button type="submit">บันทึก</button>
+          </div>
+        </form>
+
+        <div style="height:10px"></div>
+        <form method="post" action="/admin/partner/delete?token=${escapeHtml(ADMIN_TOKEN)}" onsubmit="return confirm('ลบพาร์ทเนอร์นี้?')" style="margin:0">
+          <input type="hidden" name="id" id="partner_delete_id" />
+          <button type="submit" class="danger">ลบ</button>
+        </form>
+      </div>
+    </dialog>
+
+    <script>
+      (function(){
+        var rows = ${JSON.stringify(partners).replace(/</g,'\\u003c')};
+        var byId = new Map(rows.map(r => [Number(r.id), r]));
+
+        var dlgNew = document.getElementById('dlgNewPartner');
+        var btnNew = document.getElementById('btnNewPartner');
+        var btnCloseNew = document.getElementById('btnCloseNewPartner');
+        var btnCancelNew = document.getElementById('btnCancelNewPartner');
+
+        var dlgD = document.getElementById('dlgPartnerDetail');
+        var btnCloseD = document.getElementById('btnClosePartnerDetail');
+
+        var elId = document.getElementById('partner_id');
+        var elTitle = document.getElementById('partnerTitle');
+        var elName = document.getElementById('partner_name');
+        var elNote = document.getElementById('partner_note');
+        var elEnabled = document.getElementById('partner_enabled');
+        var elDt = document.getElementById('partner_dt');
+        var delId = document.getElementById('partner_delete_id');
+
+        function openDlg(d){ if(d && d.showModal) d.showModal(); else if(d) d.setAttribute('open','open'); }
+        function closeDlg(d){ if(d && d.close) d.close(); else if(d) d.removeAttribute('open'); }
+
+        if(btnNew) btnNew.addEventListener('click', function(){ openDlg(dlgNew); });
+        if(btnCloseNew) btnCloseNew.addEventListener('click', function(){ closeDlg(dlgNew); });
+        if(btnCancelNew) btnCancelNew.addEventListener('click', function(){ closeDlg(dlgNew); });
+
+        window.openPartnerDetail = function(id){
+          var r = byId.get(Number(id));
+          if(!r) return;
+          elId.value = r.id;
+          delId.value = r.id;
+          elTitle.textContent = r.name;
+          elName.value = r.name || '';
+          elNote.value = r.note || '';
+          if (elCust) elCust.value = r.customer_token || '';
+          if (elCustLabel) elCustLabel.value = r.customer_label || '';
+          if (elPartner) elPartner.value = r.partner_id ? String(r.partner_id) : '';
+          if (elPartnerName) elPartnerName.value = r.partner_name || '';
+          elEnabled.value = String(r.enabled ? 1 : 0);
+          elDt.value = r.default_receiving_time_id ? String(r.default_receiving_time_id) : '';
+          openDlg(dlgD);
+        };
+
+        if(btnCloseD) btnCloseD.addEventListener('click', function(){ closeDlg(dlgD); });
+      })();
+    </script>
+  </div>
+  `;
+
+  res.type('html').send(adminLayout({ title: 'พาร์ทเนอร์', active: 'partners', msg, body }));
+});
+
+app.post('/admin/partner/create', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { name, note, enabled, default_receiving_time_id } = req.body || {};
+  const nm = String(name||'').trim();
+  const nt = String(note||'').trim();
+  const en = String(enabled)==='0'?0:1;
+  const dt = default_receiving_time_id ? Number(default_receiving_time_id) : null;
+  if(!nm) return redirectAdminTo(res, '/admin/partners', 'ชื่อหาย');
+  const p = await db();
+  try{
+    await p.execute('INSERT INTO partners(name,note,enabled,default_receiving_time_id) VALUES (?,?,?,?)', [nm, nt, en, dt]);
+  }catch(e){
+    console.error(e);
+    return redirectAdminTo(res, '/admin/partners', 'ชื่อซ้ำ/เพิ่มไม่สำเร็จ');
+  }
+  return redirectAdminTo(res, '/admin/partners', 'เพิ่มแล้ว');
+});
+
+app.post('/admin/partner/update', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { id, name, note, enabled, default_receiving_time_id } = req.body || {};
+  const pid = Number(id);
+  const nm = String(name||'').trim();
+  const nt = String(note||'').trim();
+  const en = String(enabled)==='0'?0:1;
+  const dt = default_receiving_time_id ? Number(default_receiving_time_id) : null;
+  if(!pid) return redirectAdminTo(res, '/admin/partners', 'id หาย');
+  if(!nm) return redirectAdminTo(res, '/admin/partners', 'ชื่อหาย');
+  const p = await db();
+  try{
+    await p.execute('UPDATE partners SET name=?, note=?, enabled=?, default_receiving_time_id=? WHERE id=?', [nm, nt, en, dt, pid]);
+  }catch(e){
+    console.error(e);
+    return redirectAdminTo(res, '/admin/partners', 'ชื่อซ้ำ/บันทึกไม่สำเร็จ');
+  }
+  return redirectAdminTo(res, '/admin/partners', 'บันทึกแล้ว');
+});
+
+app.post('/admin/partner/delete', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const pid = Number((req.body && req.body.id) || 0);
+  if(!pid) return redirectAdminTo(res, '/admin/partners', 'id หาย');
+  const p = await db();
+  await p.execute('DELETE FROM partners WHERE id=?', [pid]);
+  return redirectAdminTo(res, '/admin/partners', 'ลบแล้ว');
+});
+
 // --- admin cash (income/expense) ---
-const CASH_CATEGORIES = [
-  'ขายของ',
-  'วัตถุดิบ',
-  'เครื่องปรุง',
-  'แพ็คของ/ถุง',
-  'ค่าน้ำมัน',
-  'ค่าแรง',
-  'ค่าน้ำ',
-  'ค่าไฟ',
-  'อุปกรณ์',
-  'อื่นๆ'
-];
+// Cash flow: income/expense entries.
+// income is linked to customers; expense is linked to partners.
 
 function ym(d){
   const y = d.getFullYear();
@@ -618,6 +843,9 @@ app.get('/admin/cash', async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const p = await db();
 
+  const customers = await getAllCustomers();
+  const [partners] = await p.query('SELECT id,name,enabled FROM partners WHERE enabled=1 ORDER BY name ASC');
+
   const today = bangkokYmd(new Date());
   const now = new Date();
   const utc = now.getTime() + now.getTimezoneOffset()*60000;
@@ -625,7 +853,7 @@ app.get('/admin/cash', async (req, res) => {
   const monthStart = `${bkk.getFullYear()}-${String(bkk.getMonth()+1).padStart(2,'0')}-01`;
 
   const [rows] = await p.execute(
-    `SELECT id, type, amount, category, note, entry_date, created_at
+    `SELECT id, type, amount, category, note, entry_date, created_at, customer_token, customer_label, partner_id, partner_name
      FROM cash_entries
      ORDER BY entry_date DESC, id DESC
      LIMIT 500`
@@ -648,8 +876,6 @@ app.get('/admin/cash', async (req, res) => {
      WHERE entry_date >= ?`,
     [monthStart]
   );
-
-  const catOptions = CASH_CATEGORIES.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
 
   const body = `
   <div class="card">
@@ -710,12 +936,26 @@ app.get('/admin/cash', async (req, res) => {
         <div style="height:10px"></div>
         <div class="row">
           <div>
-            <div class="muted">หมวดหมู่</div>
-            <select name="category" required>${catOptions}</select>
+            <div class="muted">รับจาก (ลูกค้า)</div>
+            <select name="customer_token" id="new_cash_customer">
+              <option value="">(พิมพ์ชื่อเอง)</option>
+              ${customers.map(c=>`<option value="${escapeHtml(c.token)}">${escapeHtml(c.label)}</option>`).join('')}
+            </select>
+            <div style="height:6px"></div>
+            <input name="customer_label" id="new_cash_customer_label" placeholder="ชื่อลูกค้า (ถ้าไม่ได้เลือกจากลิสต์)" />
           </div>
           <div>
             <div class="muted">หมายเหตุ</div>
             <input name="note" placeholder="เช่น ซื้อหมูบด" />
+          </div>
+          <div>
+            <div class="muted">จ่ายให้ (พาร์ทเนอร์)</div>
+            <select name="partner_id" id="new_cash_partner">
+              <option value="">(พิมพ์ชื่อเอง)</option>
+              ${partners.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('')}
+            </select>
+            <div style="height:6px"></div>
+            <input name="partner_name" id="new_cash_partner_name" placeholder="ชื่อผู้รับเงิน (ถ้าไม่ได้เลือกจากลิสต์)" />
           </div>
         </div>
 
@@ -758,12 +998,26 @@ app.get('/admin/cash', async (req, res) => {
           <div style="height:10px"></div>
           <div class="row">
             <div>
-              <div class="muted">หมวดหมู่</div>
-              <select name="category" id="cash_category" required>${catOptions}</select>
+              <div class="muted">รับจาก (ลูกค้า)</div>
+              <select name="customer_token" id="cash_customer">
+                <option value="">(พิมพ์ชื่อเอง)</option>
+                ${customers.map(c=>`<option value="${escapeHtml(c.token)}">${escapeHtml(c.label)}</option>`).join('')}
+              </select>
+              <div style="height:6px"></div>
+              <input name="customer_label" id="cash_customer_label" />
             </div>
             <div>
               <div class="muted">หมายเหตุ</div>
               <input name="note" id="cash_note" />
+            </div>
+            <div>
+              <div class="muted">จ่ายให้ (พาร์ทเนอร์)</div>
+              <select name="partner_id" id="cash_partner">
+                <option value="">(พิมพ์ชื่อเอง)</option>
+                ${partners.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('')}
+              </select>
+              <div style="height:6px"></div>
+              <input name="partner_name" id="cash_partner_name" />
             </div>
           </div>
 
@@ -790,7 +1044,7 @@ app.get('/admin/cash', async (req, res) => {
           <button type="button" class="secondary" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px" onclick="openCashDetail(${escapeHtml(JSON.stringify(r.id))})">
             <div class="actions" style="justify-content:space-between;align-items:flex-start">
               <div>
-                <div><b>${escapeHtml(r.category)}</b></div>
+                <div><b>${escapeHtml(r.type==='income' ? ('รับจาก: '+(r.customer_label||'')) : ('จ่ายให้: '+(r.partner_name||'')))}</b></div>
                 <div class="muted">${escapeHtml(String(r.entry_date).slice(0,10))}${r.note ? ' · ' + escapeHtml(r.note) : ''}</div>
               </div>
               <div style="font-weight:900;color:${color}">${sign}${Number(r.amount||0).toLocaleString('th-TH')}</div>
@@ -816,8 +1070,11 @@ app.get('/admin/cash', async (req, res) => {
         var elId = document.getElementById('cash_id');
         var elType = document.getElementById('cash_type');
         var elAmt = document.getElementById('cash_amount');
-        var elCat = document.getElementById('cash_category');
         var elNote = document.getElementById('cash_note');
+        var elCust = document.getElementById('cash_customer');
+        var elCustLabel = document.getElementById('cash_customer_label');
+        var elPartner = document.getElementById('cash_partner');
+        var elPartnerName = document.getElementById('cash_partner_name');
         var elDate = document.getElementById('cash_date');
         var delId = document.getElementById('cash_delete_id');
 
@@ -835,8 +1092,11 @@ app.get('/admin/cash', async (req, res) => {
           delId.value = r.id;
           elType.value = r.type;
           elAmt.value = String(r.amount||0);
-          elCat.value = r.category;
           elNote.value = r.note || '';
+          if (elCust) elCust.value = r.customer_token || '';
+          if (elCustLabel) elCustLabel.value = r.customer_label || '';
+          if (elPartner) elPartner.value = r.partner_id ? String(r.partner_id) : '';
+          if (elPartnerName) elPartnerName.value = r.partner_name || '';
           elDate.value = String(r.entry_date).slice(0,10);
           openDlg(dlgD);
         };
@@ -852,46 +1112,76 @@ app.get('/admin/cash', async (req, res) => {
 
 app.post('/admin/cash/create', async (req, res) => {
   if (!requireAdmin(req, res)) return;
-  const { type, amount, category, note, entry_date } = req.body || {};
+  const { type, amount, note, entry_date, customer_token, customer_label, partner_id, partner_name } = req.body || {};
   const tp = (type === 'income' || type === 'expense') ? type : null;
   const amt = Number(amount);
-  const cat = String(category||'').trim();
+  const cat = '';
   const nt = String(note||'').trim();
   const d = String(entry_date||'').slice(0,10);
 
   if (!tp) return redirectAdminTo(res, '/admin/cash', 'type ไม่ถูกต้อง');
   if (!Number.isFinite(amt) || amt <= 0) return redirectAdminTo(res, '/admin/cash', 'จำนวนเงินไม่ถูกต้อง');
-  if (!cat) return redirectAdminTo(res, '/admin/cash', 'หมวดหมู่หาย');
-  if (!d) return redirectAdminTo(res, '/admin/cash', 'วันที่หาย');
+    if (!d) return redirectAdminTo(res, '/admin/cash', 'วันที่หาย');
+
+  const custTok = String(customer_token || '').trim();
+  const custLabel = String(customer_label || '').trim();
+  const partnerId = partner_id ? Number(partner_id) : null;
+  const partnerName = String(partner_name || '').trim();
+
+  // Validation rules:
+  // - income: must have (custTok or custLabel)
+  // - expense: must have (partnerId or partnerName)
+  if (tp === 'income') {
+    if (!custTok && !custLabel) return redirectAdminTo(res, '/admin/cash', 'กรุณาระบุผู้จ่ายเงิน (ลูกค้า)');
+  }
+  if (tp === 'expense') {
+    if (!partnerId && !partnerName) return redirectAdminTo(res, '/admin/cash', 'กรุณาระบุผู้รับเงิน (พาร์ทเนอร์)');
+  }
+
 
   const p = await db();
   await p.execute(
-    'INSERT INTO cash_entries(type,amount,category,note,entry_date) VALUES (?,?,?,?,?)',
-    [tp, amt, cat, nt, d]
+    'INSERT INTO cash_entries(type,amount,category,note,entry_date,customer_token,customer_label,partner_id,partner_name) VALUES (?,?,?,?,?,?,?,?,?)',
+    [tp, amt, cat, nt, d, custTok || null, custLabel || null, partnerId, partnerName || null]
   );
   return redirectAdminTo(res, '/admin/cash', 'บันทึกแล้ว');
 });
 
 app.post('/admin/cash/update', async (req, res) => {
   if (!requireAdmin(req, res)) return;
-  const { id, type, amount, category, note, entry_date } = req.body || {};
+  const { id, type, amount, note, entry_date, customer_token, customer_label, partner_id, partner_name } = req.body || {};
   const cid = Number(id);
   const tp = (type === 'income' || type === 'expense') ? type : null;
   const amt = Number(amount);
-  const cat = String(category||'').trim();
+  const cat = '';
   const nt = String(note||'').trim();
   const d = String(entry_date||'').slice(0,10);
 
   if (!cid) return redirectAdminTo(res, '/admin/cash', 'id หาย');
   if (!tp) return redirectAdminTo(res, '/admin/cash', 'type ไม่ถูกต้อง');
   if (!Number.isFinite(amt) || amt <= 0) return redirectAdminTo(res, '/admin/cash', 'จำนวนเงินไม่ถูกต้อง');
-  if (!cat) return redirectAdminTo(res, '/admin/cash', 'หมวดหมู่หาย');
-  if (!d) return redirectAdminTo(res, '/admin/cash', 'วันที่หาย');
+    if (!d) return redirectAdminTo(res, '/admin/cash', 'วันที่หาย');
+
+  const custTok = String(customer_token || '').trim();
+  const custLabel = String(customer_label || '').trim();
+  const partnerId = partner_id ? Number(partner_id) : null;
+  const partnerName = String(partner_name || '').trim();
+
+  // Validation rules:
+  // - income: must have (custTok or custLabel)
+  // - expense: must have (partnerId or partnerName)
+  if (tp === 'income') {
+    if (!custTok && !custLabel) return redirectAdminTo(res, '/admin/cash', 'กรุณาระบุผู้จ่ายเงิน (ลูกค้า)');
+  }
+  if (tp === 'expense') {
+    if (!partnerId && !partnerName) return redirectAdminTo(res, '/admin/cash', 'กรุณาระบุผู้รับเงิน (พาร์ทเนอร์)');
+  }
+
 
   const p = await db();
   await p.execute(
-    'UPDATE cash_entries SET type=?, amount=?, category=?, note=?, entry_date=? WHERE id=?',
-    [tp, amt, cat, nt, d, cid]
+    'UPDATE cash_entries SET type=?, amount=?, category=?, note=?, entry_date=?, customer_token=?, customer_label=?, partner_id=?, partner_name=? WHERE id=?',
+    [tp, amt, cat, nt, d, custTok || null, custLabel || null, partnerId, partnerName || null, cid]
   );
   return redirectAdminTo(res, '/admin/cash', 'บันทึกแล้ว');
 });
