@@ -776,11 +776,110 @@ app.get('/game', async (req, res) => {
         this.add.text(tile*8, tile*1+4, 'VEG SHOP', {fontFamily:'monospace', fontSize:'10px', color:'#d9fbe1'}).setOrigin(0.5,0);
 
         // Simple ambient overlay
-        var r = this.add.rectangle(W/2, H/2, W, H, 0x000000, 0.12);\n        r.setScrollFactor(0);
+        var r = this.add.rectangle(W/2, H/2, W, H, 0x000000, 0.12);
+        r.setScrollFactor(0);
         r.setBlendMode(Phaser.BlendModes.MULTIPLY);
 
-        // Small UI hint inside canvas
-        this.add.text(8, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setScrollFactor(0);\n\n        // Horizontal pan (drag to scroll)\n        var cam = this.cameras.main;\n        var isPanning = false;\n        var startX = 0;\n        var startScrollX = 0;\n\n        this.input.on('pointerdown', function(pointer){\n          isPanning = true;\n          startX = pointer.x;\n          startScrollX = cam.scrollX;\n        });\n        this.input.on('pointerup', function(){ isPanning = false; });\n        this.input.on('pointerout', function(){ isPanning = false; });\n        this.input.on('pointermove', function(pointer){\n          if(!isPanning) return;\n          var dx = pointer.x - startX;\n          cam.scrollX = Phaser.Math.Clamp(startScrollX - dx, 0, worldW - W);\n        });
+        // Edge vignette (helps user see screen bounds)
+        var vignTop = this.add.rectangle(W/2, 0, W, 18, 0x000000, 0.35).setOrigin(0.5,0).setScrollFactor(0);
+        var vignBot = this.add.rectangle(W/2, H-18, W, 18, 0x000000, 0.35).setOrigin(0.5,0).setScrollFactor(0);
+        var vignL = this.add.rectangle(0, H/2, 22, H, 0x000000, 0.35).setOrigin(0,0.5).setScrollFactor(0);
+        var vignR = this.add.rectangle(W-22, H/2, 22, H, 0x000000, 0.35).setOrigin(0,0.5).setScrollFactor(0);
+
+        // Boundary hint: fades in when you reach left/right end
+        var edgeL = this.add.rectangle(0, H/2, 30, H, 0x000000, 0.0).setOrigin(0,0.5).setScrollFactor(0);
+        var edgeR = this.add.rectangle(W-30, H/2, 30, H, 0x000000, 0.0).setOrigin(0,0.5).setScrollFactor(0);
+
+        // UI hint
+        this.add.text(8, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ใช้ 2 นิ้วถ่าง/หุบเพื่อซูม', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setScrollFactor(0);
+
+        var cam = this.cameras.main;
+        var userZoom = 1.0;
+        cam.setZoom(userZoom);
+
+        function maxScrollX(){
+          return Math.max(0, worldW - (W / cam.zoom));
+        }
+
+        function clampScroll(){
+          cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, maxScrollX());
+        }
+
+        // Update edge fades
+        this.events.on('postupdate', function(){
+          var maxX = maxScrollX();
+          var atL = maxX <= 0 ? 1 : (1 - Phaser.Math.Clamp(cam.scrollX / 24, 0, 1));
+          var atR = maxX <= 0 ? 1 : (1 - Phaser.Math.Clamp((maxX - cam.scrollX) / 24, 0, 1));
+          edgeL.alpha = 0.45 * atL;
+          edgeR.alpha = 0.45 * atR;
+        });
+
+        // Horizontal pan (drag to scroll)
+        var isPanning = false;
+        var startX = 0;
+        var startScrollX = 0;
+
+        this.input.on('pointerdown', function(pointer){
+          // ignore pan start if pinch is active
+          if (pointer.isDown && pointer.pointerId !== undefined) {
+            isPanning = true;
+            startX = pointer.x;
+            startScrollX = cam.scrollX;
+          }
+        });
+        this.input.on('pointerup', function(){ isPanning = false; });
+        this.input.on('pointerout', function(){ isPanning = false; });
+        this.input.on('pointermove', function(pointer){
+          if(!isPanning) return;
+          // if more than 1 pointer down, let pinch handler manage
+          var p1 = this.input.pointer1;
+          var p2 = this.input.pointer2;
+          if (p1 && p2 && p1.isDown && p2.isDown) return;
+          var dx = pointer.x - startX;
+          cam.scrollX = startScrollX - (dx / cam.zoom);
+          clampScroll();
+        }, this);
+
+        // Pinch zoom (2 fingers)
+        this.input.addPointer(1);
+        var pinchActive = false;
+        var pinchStartDist = 0;
+        var pinchStartZoom = 1;
+
+        function dist(a,b){
+          var dx=a.x-b.x, dy=a.y-b.y;
+          return Math.sqrt(dx*dx+dy*dy);
+        }
+
+        this.input.on('pointerdown', function(){
+          var p1 = this.input.pointer1;
+          var p2 = this.input.pointer2;
+          if (p1 && p2 && p1.isDown && p2.isDown) {
+            pinchActive = true;
+            pinchStartDist = dist(p1,p2);
+            pinchStartZoom = userZoom;
+            isPanning = false;
+          }
+        }, this);
+
+        this.input.on('pointerup', function(){
+          var p1 = this.input.pointer1;
+          var p2 = this.input.pointer2;
+          if (!(p1 && p2 && p1.isDown && p2.isDown)) pinchActive = false;
+        }, this);
+
+        this.input.on('pointermove', function(){
+          if (!pinchActive) return;
+          var p1 = this.input.pointer1;
+          var p2 = this.input.pointer2;
+          if (!(p1 && p2 && p1.isDown && p2.isDown)) return;
+          var d = dist(p1,p2);
+          if (!pinchStartDist) return;
+          var ratio = d / pinchStartDist;
+          userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.75, 2.5);
+          cam.setZoom(userZoom);
+          clampScroll();
+        }, this);
       }
     })();
   </script>
