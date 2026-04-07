@@ -614,15 +614,18 @@ app.get('/game', async (req, res) => {
   <style>
     html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
     body{position:fixed;inset:0}
-    #wrap{position:fixed;inset:0;box-sizing:border-box;padding:0;display:block}
+    #wrap{position:fixed;inset:0}
+
     .top{position:fixed;left:0;right:0;top:0;z-index:10;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px;padding-top:calc(10px + env(safe-area-inset-top));background:linear-gradient(rgba(11,15,20,0.88) 60%, rgba(11,15,20,0));pointer-events:none}
     .top *{pointer-events:auto}
     a{color:#9ae6b4;text-decoration:none}
     .hint{color:#b7c0cc;font-size:12px}
-    #game{--vpad:0px;position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top) + var(--vpad));bottom:calc(10px + env(safe-area-inset-bottom) + var(--vpad));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
-    /* subtle 'game screen' feel: inner frame + very light scanlines */
-    #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 4px rgba(255,255,255,0.14), inset 0 0 60px rgba(0,0,0,0.28)}
-    #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.22;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0px, rgba(255,255,255,0.06) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
+
+    /* game bezel */
+    #game{position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:calc(10px + env(safe-area-inset-bottom));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
+    #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 3px rgba(255,255,255,0.14), inset 0 0 60px rgba(0,0,0,0.28)}
+    #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.18;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
+
     #game canvas{touch-action:none;position:absolute;left:0;top:0;width:100% !important;height:100% !important}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
@@ -632,11 +635,13 @@ app.get('/game', async (req, res) => {
     <div class="top">
       <div>
         <div style="font-weight:900;font-size:18px">ร้านขายผัก (ห้องเปล่า ๆ)</div>
-        <div class="hint">Prototype: ฉากนิ่งสไตล์พิกเซล (ยังไม่ต้องเดิน) · ต่อไปค่อยเพิ่มลากวาง/แอนิเมชัน</div>
+        <div class="hint">Prototype: แนวตั้งเต็มจอ · ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ถ่าง/หุบเพื่อซูม</div>
       </div>
-      <div class="hint" style="display:flex;gap:10px;align-items:center"><button id="btnRefresh" type="button" style="padding:8px 10px;border-radius:10px;border:1px solid #2a3a52;background:#111;color:#fff;font-weight:800">รีเฟรช</button><a href="/admin?token=${escapeHtml(ADMIN_TOKEN)}">กลับหน้าแอดมิน</a></div>
+      <div class="hint" style="display:flex;gap:10px;align-items:center">
+        <button id="btnRefresh" type="button" style="padding:8px 10px;border-radius:10px;border:1px solid #2a3a52;background:#111;color:#fff;font-weight:800">รีเฟรช</button>
+        <a href="/admin?token=${escapeHtml(ADMIN_TOKEN)}">กลับหน้าแอดมิน</a>
+      </div>
     </div>
-
     <div id="game"></div>
   </div>
 
@@ -645,31 +650,17 @@ app.get('/game', async (req, res) => {
       var br = document.getElementById('btnRefresh');
       if (br) br.addEventListener('click', function(){ location.reload(); });
 
-      // Pixel-art feel
-
-      // Letterbox zoom-out: keep left/right locked; shrink top/bottom inwards
-      var vpadPx = 0;
-      function setVPad(px){
-        try{
-          vpadPx = Math.max(0, Math.floor(px));
-          var el = document.getElementById('game');
-          if (el) el.style.setProperty('--vpad', vpadPx + 'px');
-        }catch(e){}
-      }
-
-      function maxVPad(){
-        // leave at least 120px of play area height
-        var h = Math.max(1, window.innerHeight);
-        return Math.max(0, Math.floor((h - 120) / 2));
-      }
-: low resolution internal canvas + no smoothing.
-      var W = 180, H = 320; // internal resolution (portrait)
+      // Internal portrait resolution (pixel vibe)
+      var W = 180, H = 320;
 
       function containerSize(){
-        return { w: Math.max(1, Math.floor(window.innerWidth)), h: Math.max(1, Math.floor(window.innerHeight)) };
+        var el = document.getElementById('game');
+        var r = el.getBoundingClientRect();
+        return { w: Math.max(1, Math.floor(r.width)), h: Math.max(1, Math.floor(r.height)) };
       }
 
-      var sz = containerSize();
+      var baseZoom = 1.0;   // auto-cover zoom
+      var userZoom = 1.0;   // pinch multiplier
 
       var config = {
         type: Phaser.CANVAS,
@@ -678,76 +669,67 @@ app.get('/game', async (req, res) => {
         width: W,
         height: H,
         pixelArt: true,
-        input: {
-          activePointers: 3,
-          touch: { capture: true }
-        },
-        scale: {
-          mode: Phaser.Scale.NONE,
-          autoCenter: Phaser.Scale.CENTER_BOTH,
-          parent: 'game',
-          width: W,
-          height: H
-        },
+        input: { activePointers: 3, touch: { capture: true } },
+        scale: { mode: Phaser.Scale.NONE, autoCenter: Phaser.Scale.CENTER_BOTH, parent: 'game', width: W, height: H },
         scene: { preload: preload, create: create }
       };
 
       var game = new Phaser.Game(config);
-      // Scale zoom: fixed (we use letterbox for zoom-out UX)
-            }
+
+      function applyZoom(){
+        try{
+          var z = baseZoom * userZoom;
+          // many levels
+          z = Math.max(0.05, Math.min(24, Math.round(z * 20) / 20));
+          game.scale.setZoom(z);
+        }catch(e){}
+      }
+
       function onResize(){
         try{
+          var s = containerSize();
+          if (game.scale && game.scale.setParentSize) game.scale.setParentSize(s.w, s.h);
           game.scale.resize(W, H);
+          baseZoom = Math.max(s.w / W, s.h / H);
           applyZoom();
         }catch(e){}
       }
-      window.addEventListener('resize', function(){ setTimeout(onResize, 50);
-      setVPad(0); });
+      window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
       setTimeout(onResize, 50);
-      setVPad(0);
-      setTimeout(function(){ try{applyZoom();}catch(e){} }, 80);
-
 
       function preload(){
-        // generate simple textures at runtime (no assets yet)
         var g = this.make.graphics({x:0,y:0,add:false});
 
-        // floor tile (wood)
         g.clear();
         g.fillStyle(0xb07a4a,1); g.fillRect(0,0,16,16);
         g.fillStyle(0x8e5f39,1); g.fillRect(0,0,16,2);
         g.fillStyle(0x935f35,1); g.fillRect(0,8,16,1);
         g.generateTexture('tile_wood',16,16);
 
-        // wall tile
         g.clear();
         g.fillStyle(0x587a9b,1); g.fillRect(0,0,16,16);
         g.fillStyle(0x3f5e7d,1); g.fillRect(0,0,16,3);
         g.fillStyle(0x2f475f,1); g.fillRect(0,15,16,1);
         g.generateTexture('tile_wall',16,16);
 
-        // counter
         g.clear();
         g.fillStyle(0x6f4a2d,1); g.fillRect(0,4,32,12);
         g.fillStyle(0x8a5a35,1); g.fillRect(0,0,32,6);
         g.fillStyle(0x3a2516,1); g.fillRect(0,15,32,1);
         g.generateTexture('counter',32,16);
 
-        // shelf
         g.clear();
         g.fillStyle(0x6b7a45,1); g.fillRect(0,2,32,12);
         g.fillStyle(0x4c5a31,1); g.fillRect(0,12,32,2);
         g.fillStyle(0x2a321b,1); g.fillRect(0,14,32,2);
         g.generateTexture('shelf',32,16);
 
-        // door
         g.clear();
         g.fillStyle(0x3a2516,1); g.fillRect(0,0,16,16);
         g.fillStyle(0x6f4a2d,1); g.fillRect(2,2,12,14);
         g.fillStyle(0x1a120b,1); g.fillRect(7,8,2,2);
         g.generateTexture('door',16,16);
 
-        // sign (veg shop)
         g.clear();
         g.fillStyle(0x1b2a1a,1); g.fillRect(0,0,64,18);
         g.fillStyle(0x2f7d32,1); g.fillRect(1,1,62,16);
@@ -756,127 +738,80 @@ app.get('/game', async (req, res) => {
       }
 
       function create(){
-        // Disable smoothing on canvas for crisp pixels
         try{
           var c = this.sys.game.canvas;
           c.style.imageRendering = 'pixelated';
           c.style.imageRendering = 'crisp-edges';
         }catch(e){}
 
-
-        // iOS (Add to Home / Safari): handle pinch ourselves and prevent page gestures
-        try{
-          var c2 = this.sys.game.canvas;
-          var pinchStartDist = 0;
-          var pinchStartZoom = 1;
-
-          function tdist(t0, t1){
-            var dx = t0.clientX - t1.clientX;
-            var dy = t0.clientY - t1.clientY;
-            return Math.sqrt(dx*dx + dy*dy);
-          }
-
-          c2.addEventListener('touchstart', function(e){
-            if (e.touches && e.touches.length >= 2) {
-              pinchStartDist = tdist(e.touches[0], e.touches[1]);
-              pinchStartZoom = userZoom;
-            }
-            e.preventDefault();
-          }, {passive:false});
-
-          c2.addEventListener('touchmove', function(e){
-            if (e.touches && e.touches.length >= 2 && pinchStartDist > 0) {
-              var d = tdist(e.touches[0], e.touches[1]);
-              var ratio = d / pinchStartDist;
-              userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.05, 12.0);
-              applyZoom();
-            }
-            e.preventDefault();
-          }, {passive:false});
-
-          c2.addEventListener('touchend', function(e){
-            if (!e.touches || e.touches.length < 2) {
-              pinchStartDist = 0;
-            }
-            e.preventDefault();
-          }, {passive:false});
-        }catch(e){}
-
         var tile = 16;
         var viewCols = Math.floor(W/tile);
         var viewRows = Math.floor(H/tile);
-        // make world wider than viewport for horizontal panning
         var worldCols = viewCols * 3;
         var worldRows = viewRows;
         var worldW = worldCols * tile;
-        var worldH = worldRows * tile;
 
-        this.cameras.main.setBounds(0, 0, worldW, worldH);
+        this.cameras.main.setBounds(0, 0, worldW, worldRows*tile);
 
-        // Floor
         for (var y=0; y<worldRows; y++){
           for (var x=0; x<worldCols; x++){
             this.add.image(x*tile, y*tile, 'tile_wood').setOrigin(0,0);
           }
         }
 
-        // Walls (top + left + right)
         for (var x=0; x<worldCols; x++) this.add.image(x*tile, 0, 'tile_wall').setOrigin(0,0);
         for (var y=0; y<worldRows; y++){
           this.add.image(0, y*tile, 'tile_wall').setOrigin(0,0);
           this.add.image((worldCols-1)*tile, y*tile, 'tile_wall').setOrigin(0,0);
         }
 
-        // Door at bottom center
         var doorX = Math.floor(worldCols/2)*tile;
         var doorY = (worldRows-1)*tile;
         this.add.image(doorX, doorY, 'door').setOrigin(0,0);
 
-        // Counter near front
         this.add.image(Math.floor(worldW/2) - tile*2, tile*12, 'counter').setOrigin(0,0);
         this.add.image(Math.floor(worldW/2), tile*12, 'counter').setOrigin(0,0);
 
-        // Shelves
         this.add.image(Math.floor(worldW/2) - tile*6, tile*6, 'shelf').setOrigin(0,0);
         this.add.image(Math.floor(worldW/2) + tile*4, tile*6, 'shelf').setOrigin(0,0);
 
-        // Sign
         this.add.image(Math.floor(worldW/2), tile*1, 'sign').setOrigin(0.5,0);
         this.add.text(Math.floor(worldW/2), tile*1+4, 'VEG SHOP', {fontFamily:'monospace', fontSize:'10px', color:'#d9fbe1'}).setOrigin(0.5,0);
 
-        // Simple ambient overlay
-        var r = this.add.rectangle(W/2, H/2, W, H, 0x000000, 0.12);
-        r.setScrollFactor(0);
-        r.setBlendMode(Phaser.BlendModes.MULTIPLY);
-
-        // UI hint
-        
-
-        // Zoom indicator (temporary)
-this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ถ่าง/หุบเพื่อซูม', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setOrigin(0.5,0).setScrollFactor(0);
-
+        // Horizontal pan (drag)
         var cam = this.cameras.main;
-
-        // Debug overlay (temporary)
+        var isPanning = false;
+        var startX = 0;
+        var startScrollX = 0;
 
         function maxScrollX(){
           return Math.max(0, worldW - W);
         }
-
         function clampScroll(){
           cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, maxScrollX());
         }
 
-        // Update edge fades
-        this.events.on('postupdate', function(){
-
-          try{
-            var t = (this.input && this.input.manager && this.input.manager.pointers) ? this.input.manager.pointers.filter(p=>p && p.isDown).length : 0;
-          }catch(e){}
+        this.input.on('pointerdown', function(pointer){
+          var p1 = this.input.pointer1;
+          var p2 = this.input.pointer2;
+          if (p1 && p2 && p1.isDown && p2.isDown) return; // pinch
+          isPanning = true;
+          startX = pointer.x;
+          startScrollX = cam.scrollX;
+        }, this);
+        this.input.on('pointerup', function(){ isPanning = false; });
+        this.input.on('pointerout', function(){ isPanning = false; });
+        this.input.on('pointermove', function(pointer){
+          if(!isPanning) return;
+          var p1 = this.input.pointer1;
+          var p2 = this.input.pointer2;
+          if (p1 && p2 && p1.isDown && p2.isDown) return;
+          var dx = pointer.x - startX;
+          cam.scrollX = startScrollX - (dx / (game.scale.zoom || 1));
+          clampScroll();
         }, this);
 
-        
-        // Touch pinch (2 fingers) - zoom (works on iOS/Chrome even when pointer2 is missing)
+        // Touch pinch zoom (robust on iOS/Chrome)
         try{
           var canvasEl = this.sys.game.canvas;
           var pinch = { active:false, startDist:0, startZoom:1 };
@@ -884,73 +819,37 @@ this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเล�
             var dx=t0.clientX-t1.clientX, dy=t0.clientY-t1.clientY;
             return Math.sqrt(dx*dx+dy*dy);
           }
-
           canvasEl.addEventListener('touchstart', function(e){
             if (e.touches && e.touches.length >= 2) {
               pinch.active = true;
               pinch.startDist = tdist(e.touches[0], e.touches[1]);
-              pinch.startZoom = 1.0;
-              // stop panning while pinching
-              try{ if (typeof isPanning !== 'undefined') isPanning = false; }catch(_){}
+              pinch.startZoom = userZoom;
+              isPanning = false;
               e.preventDefault();
             }
           }, {passive:false});
-
           canvasEl.addEventListener('touchmove', function(e){
             if (!pinch.active) return;
             if (e.touches && e.touches.length >= 2 && pinch.startDist > 0) {
               var d = tdist(e.touches[0], e.touches[1]);
               var ratio = d / pinch.startDist;
-              // ratio >1 => zoom in (reduce letterbox), ratio <1 => zoom out (increase letterbox)
-              var target = Phaser.Math.Clamp(pinch.startZoom / ratio, 0.25, 4.0);
-              // Map target zoom-out to vpad: 1.0 => 0px, 0.25 => maxVPad
-              var t = Phaser.Math.Clamp((1.0 - target) / (1.0 - 0.25), 0, 1);
-              setVPad(t * maxVPad());
+              userZoom = Phaser.Math.Clamp(pinch.startZoom * ratio, 0.05, 12.0);
+              applyZoom();
               clampScroll();
               e.preventDefault();
             }
           }, {passive:false});
-
           canvasEl.addEventListener('touchend', function(e){
-            if (!e.touches || e.touches.length < 2) {
-              pinch.active = false;
-              pinch.startDist = 0;
-            }
+            if (!e.touches || e.touches.length < 2) { pinch.active = false; pinch.startDist = 0; }
           }, {passive:true});
         }catch(e){}
-
-        // Horizontal pan (drag to scroll)
-        var isPanning = false;
-        var startX = 0;
-        var startScrollX = 0;
-
-        this.input.on('pointerdown', function(pointer){
-          // ignore pan start if pinch is active
-          if (pointer.isDown && pointer.pointerId !== undefined) {
-            isPanning = true;
-            startX = pointer.x;
-            startScrollX = cam.scrollX;
-          }
-        });
-        this.input.on('pointerup', function(){ isPanning = false; });
-        this.input.on('pointerout', function(){ isPanning = false; });
-        this.input.on('pointermove', function(pointer){
-          if(!isPanning) return;
-          try{ if (typeof pinch !== 'undefined' && pinch.active) return; }catch(_){}
-          // if more than 1 pointer down, let pinch handler manage
-          var p1 = this.input.pointer1;
-          var p2 = this.input.pointer2;
-          if (p1 && p2 && p1.isDown && p2.isDown) return;
-          var dx = pointer.x - startX;
-          cam.scrollX = startScrollX - (dx / cam.zoom);
-          clampScroll();
-        }, this);
       }
     })();
   </script>
 </body>
 </html>`);
 });
+
 // --- admin partners (ผู้รับเงิน/ผู้ขายของ) ---
 app.get('/admin/partners', async (req, res) => {
   if (!requireAdmin(req, res)) return;
