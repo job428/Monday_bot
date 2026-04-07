@@ -916,6 +916,7 @@ app.get('/game', async (req, res) => {
               'dist:' + d.toFixed(1),
               'userZoom:' + (typeof userZoom==='number'?userZoom.toFixed(2):String(userZoom)),
               'scaleZoom:' + (this.sys.game.scale.zoom ? this.sys.game.scale.zoom.toFixed(2) : 'n/a'),
+              'touches:' + ((this.sys.game.canvas && this.sys.game.canvas.touches)? this.sys.game.canvas.touches.length : ''),
             ]);
           }catch(e){}
 
@@ -951,6 +952,43 @@ app.get('/game', async (req, res) => {
           cam.scrollX = startScrollX - (dx / cam.zoom);
           clampScroll();
         }, this);
+
+
+        // Touch pinch fallback (iOS/standalone): some builds don't expose pointer2
+        try{
+          var canvasEl = this.sys.game.canvas;
+          var tPinch = { active:false, startDist:0, startZoom:1 };
+          function tdist(t0,t1){
+            var dx=t0.clientX-t1.clientX, dy=t0.clientY-t1.clientY;
+            return Math.sqrt(dx*dx+dy*dy);
+          }
+
+          canvasEl.addEventListener('touchstart', function(e){
+            if (e.touches && e.touches.length >= 2) {
+              tPinch.active = true;
+              tPinch.startDist = tdist(e.touches[0], e.touches[1]);
+              tPinch.startZoom = userZoom;
+              // prevent browser gesture only for 2-finger
+              e.preventDefault();
+            }
+          }, {passive:false});
+
+          canvasEl.addEventListener('touchmove', function(e){
+            if (!tPinch.active) return;
+            if (e.touches && e.touches.length >= 2 && tPinch.startDist > 0) {
+              var d = tdist(e.touches[0], e.touches[1]);
+              var ratio = d / tPinch.startDist;
+              userZoom = Phaser.Math.Clamp(tPinch.startZoom * ratio, 0.75, 2.5);
+              applyZoom();
+              clampScroll();
+              e.preventDefault();
+            }
+          }, {passive:false});
+
+          canvasEl.addEventListener('touchend', function(e){
+            if (!e.touches || e.touches.length < 2) tPinch.active = false;
+          }, {passive:true});
+        }catch(e){}
 
         // Pinch zoom (2 fingers)
         this.input.addPointer(2);
