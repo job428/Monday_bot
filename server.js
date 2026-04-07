@@ -887,12 +887,12 @@ app.get('/game', async (req, res) => {
         var edgeR = this.add.rectangle(W-30, H/2, 30, H, 0x000000, 0.0).setOrigin(0,0.5).setScrollFactor(0);
 
         // UI hint
-        this.add.text(8, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ใช้ 2 นิ้วถ่าง/หุบเพื่อซูม', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setScrollFactor(0);
+        this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ใช้ 2 นิ้วถ่าง/หุบเพื่อซูม', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setOrigin(0.5,0).setScrollFactor(0);
 
         var cam = this.cameras.main;
 
         // Debug overlay (temporary)
-        var dbgText = this.add.text(8, 8, '', {fontFamily:'monospace', fontSize:'10px', color:'#ffd27a', backgroundColor:'rgba(0,0,0,0.35)', padding:{x:4,y:3}}).setScrollFactor(0);
+        var dbgText = this.add.text(W/2, 10, 'DBG', {fontFamily:'monospace', fontSize:'12px', color:'#ffd27a', backgroundColor:'rgba(0,0,0,0.55)', padding:{x:6,y:4}}).setOrigin(0.5,0).setScrollFactor(0);
 
         function maxScrollX(){
           return Math.max(0, worldW - W);
