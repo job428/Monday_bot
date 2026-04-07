@@ -656,7 +656,8 @@ app.get('/game', async (req, res) => {
         height: H,
         pixelArt: true,
         input: {
-          activePointers: 3
+          activePointers: 3,
+          touch: { capture: true }
         },
         scale: {
           mode: Phaser.Scale.ENVELOP,
@@ -787,79 +788,6 @@ app.get('/game', async (req, res) => {
           var c = this.sys.game.canvas;
           c.style.imageRendering = 'pixelated';
           c.style.imageRendering = 'crisp-edges';
-        }catch(e){}
-
-        // iOS (Add to Home / Safari): handle pinch ourselves on the canvas (standalone is picky)
-        try{
-          var c2 = this.sys.game.canvas;
-          var pinchStartDist = 0;
-          var pinchStartZoom = 1;
-
-          function tdist(t0, t1){
-            var dx = t0.clientX - t1.clientX;
-            var dy = t0.clientY - t1.clientY;
-            return Math.sqrt(dx*dx + dy*dy);
-          }
-
-          c2.addEventListener('touchstart', function(e){
-            if (e.touches && e.touches.length >= 2) {
-              pinchStartDist = tdist(e.touches[0], e.touches[1]);
-              pinchStartZoom = userZoom;
-            }
-            e.preventDefault();
-          }, {passive:false});
-
-          c2.addEventListener('touchmove', function(e){
-            if (e.touches && e.touches.length >= 2 && pinchStartDist > 0) {
-              var d = tdist(e.touches[0], e.touches[1]);
-              var ratio = d / pinchStartDist;
-              userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.75, 2.5);
-              applyZoom();
-            }
-            e.preventDefault();
-          }, {passive:false});
-
-          c2.addEventListener('touchend', function(e){
-            if (!e.touches || e.touches.length < 2) pinchStartDist = 0;
-            e.preventDefault();
-          }, {passive:false});
-
-          // iOS fallback: gesture events (some A2HS builds prefer this)
-          var gStartZoom = 1;
-          c2.addEventListener('gesturestart', function(e){
-            try{ gStartZoom = userZoom; }catch(_){}
-            e.preventDefault();
-          }, {passive:false});
-          c2.addEventListener('gesturechange', function(e){
-            try{
-              if (typeof e.scale === 'number') {
-                userZoom = Phaser.Math.Clamp(gStartZoom * e.scale, 0.75, 2.5);
-                applyZoom();
-              }
-            }catch(_){}
-            e.preventDefault();
-          }, {passive:false});
-          c2.addEventListener('gestureend', function(e){
-            e.preventDefault();
-          }, {passive:false});
-
-          // Some iOS standalone builds dispatch gesture events on document (not canvas)
-          document.addEventListener('gesturestart', function(e){
-            try{ gStartZoom = userZoom; }catch(_){}
-            e.preventDefault();
-          }, {passive:false});
-          document.addEventListener('gesturechange', function(e){
-            try{
-              if (typeof e.scale === 'number') {
-                userZoom = Phaser.Math.Clamp(gStartZoom * e.scale, 0.75, 2.5);
-                applyZoom();
-              }
-            }catch(_){}
-            e.preventDefault();
-          }, {passive:false});
-          document.addEventListener('gestureend', function(e){
-            e.preventDefault();
-          }, {passive:false});
         }catch(e){}
 
 
