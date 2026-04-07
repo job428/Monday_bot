@@ -693,6 +693,7 @@ app.get('/game', async (req, res) => {
       }
       window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
       setTimeout(onResize, 50);
+      setTimeout(function(){ try{applyZoom();}catch(e){} }, 80);
 
 
       function preload(){
@@ -850,13 +851,12 @@ app.get('/game', async (req, res) => {
         
 
         // Zoom indicator (temporary)
-        var zoomHud = this.add.text(8, 10, 'ZOOM', {fontFamily:'monospace', fontSize:'12px', color:'#ffd27a', backgroundColor:'rgba(0,0,0,0.5)', padding:{x:6,y:4}}).setScrollFactor(0);
+        var zoomHud = this.add.text(8, 8, '', {fontFamily:'monospace', fontSize:'10px', color:'#ffd27a', backgroundColor:'rgba(0,0,0,0.35)', padding:{x:4,y:3}}).setScrollFactor(0);
 this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ถ่าง/หุบเพื่อซูม', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setOrigin(0.5,0).setScrollFactor(0);
 
         var cam = this.cameras.main;
 
         // Debug overlay (temporary)
-        var dbgText = this.add.text(W/2, 10, 'DBG', {fontFamily:'monospace', fontSize:'12px', color:'#ffd27a', backgroundColor:'rgba(0,0,0,0.55)', padding:{x:6,y:4}}).setOrigin(0.5,0).setScrollFactor(0);
 
         function maxScrollX(){
           return Math.max(0, worldW - W);
@@ -871,7 +871,12 @@ this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเล�
 
           try{
             var t = (this.input && this.input.manager && this.input.manager.pointers) ? this.input.manager.pointers.filter(p=>p && p.isDown).length : 0;
-            zoomHud.setText('ZOOM:' + (this.sys.game.scale.zoom ? this.sys.game.scale.zoom.toFixed(2) : 'n/a') + '  touches:' + t);
+            var down = 0;
+            try{
+              var ps = (this.input && this.input.manager && this.input.manager.pointers) ? this.input.manager.pointers : [];
+              for (var i=0;i<ps.length;i++){ if (ps[i] && ps[i].isDown) down++; }
+            }catch(_){}
+            zoomHud.setText('zoom:' + (this.sys.game.scale.zoom ? this.sys.game.scale.zoom.toFixed(2) : 'n/a') + '  touches:' + down);
           }catch(e){}
 
           var maxX = maxScrollX();
