@@ -683,44 +683,6 @@ app.get('/game', async (req, res) => {
           z = Math.max(0.5, Math.min(6, Math.round(z * 4) / 4));
           game.scale.setZoom(z);
         }catch(e){}
-
-        // iOS (Add to Home / Safari): handle pinch ourselves and prevent page gestures
-        try{
-          var c2 = this.sys.game.canvas;
-          var pinchStartDist = 0;
-          var pinchStartZoom = 1;
-
-          function tdist(t0, t1){
-            var dx = t0.clientX - t1.clientX;
-            var dy = t0.clientY - t1.clientY;
-            return Math.sqrt(dx*dx + dy*dy);
-          }
-
-          c2.addEventListener('touchstart', function(e){
-            if (e.touches && e.touches.length >= 2) {
-              pinchStartDist = tdist(e.touches[0], e.touches[1]);
-              pinchStartZoom = userZoom;
-            }
-            e.preventDefault();
-          }, {passive:false});
-
-          c2.addEventListener('touchmove', function(e){
-            if (e.touches && e.touches.length >= 2 && pinchStartDist > 0) {
-              var d = tdist(e.touches[0], e.touches[1]);
-              var ratio = d / pinchStartDist;
-              userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.75, 2.5);
-              applyZoom();
-            }
-            e.preventDefault();
-          }, {passive:false});
-
-          c2.addEventListener('touchend', function(e){
-            if (!e.touches || e.touches.length < 2) {
-              pinchStartDist = 0;
-            }
-            e.preventDefault();
-          }, {passive:false});
-        }catch(e){}
       }
 
       function onResize(){
@@ -826,6 +788,43 @@ app.get('/game', async (req, res) => {
           c.style.imageRendering = 'pixelated';
           c.style.imageRendering = 'crisp-edges';
         }catch(e){}
+
+        // iOS (Add to Home / Safari): handle pinch ourselves on the canvas (standalone is picky)
+        try{
+          var c2 = this.sys.game.canvas;
+          var pinchStartDist = 0;
+          var pinchStartZoom = 1;
+
+          function tdist(t0, t1){
+            var dx = t0.clientX - t1.clientX;
+            var dy = t0.clientY - t1.clientY;
+            return Math.sqrt(dx*dx + dy*dy);
+          }
+
+          c2.addEventListener('touchstart', function(e){
+            if (e.touches && e.touches.length >= 2) {
+              pinchStartDist = tdist(e.touches[0], e.touches[1]);
+              pinchStartZoom = userZoom;
+            }
+            e.preventDefault();
+          }, {passive:false});
+
+          c2.addEventListener('touchmove', function(e){
+            if (e.touches && e.touches.length >= 2 && pinchStartDist > 0) {
+              var d = tdist(e.touches[0], e.touches[1]);
+              var ratio = d / pinchStartDist;
+              userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.75, 2.5);
+              applyZoom();
+            }
+            e.preventDefault();
+          }, {passive:false});
+
+          c2.addEventListener('touchend', function(e){
+            if (!e.touches || e.touches.length < 2) pinchStartDist = 0;
+            e.preventDefault();
+          }, {passive:false});
+        }catch(e){}
+
 
         // iOS (Add to Home / Safari): handle pinch ourselves and prevent page gestures
         try{
