@@ -244,6 +244,7 @@ function adminNav(active) {
     ${link('/admin/customers', 'ลูกค้า', 'customers')}
     ${link('/admin/veggies', 'ผัก', 'veggies')}
     ${link('/admin/delivery-times', 'เวลาส่ง', 'delivery')}
+    ${link('/admin/cash', 'รายรับรายจ่าย', 'cash')}
   </div>`;
 }
 
@@ -591,6 +592,319 @@ app.get('/admin/orders', async (req, res) => {
 
   res.type('html').send(adminLayout({ title: 'ออเดอร์', active: 'orders', msg: req.query.msg ? String(req.query.msg) : '', body }));
 });
+
+// --- admin cash (income/expense) ---
+const CASH_CATEGORIES = [
+  'ขายของ',
+  'วัตถุดิบ',
+  'เครื่องปรุง',
+  'แพ็คของ/ถุง',
+  'ค่าน้ำมัน',
+  'ค่าแรง',
+  'ค่าน้ำ',
+  'ค่าไฟ',
+  'อุปกรณ์',
+  'อื่นๆ'
+];
+
+function ym(d){
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+app.get('/admin/cash', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const p = await db();
+
+  const today = bangkokYmd(new Date());
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset()*60000;
+  const bkk = new Date(utc + 7*3600000);
+  const monthStart = `${bkk.getFullYear()}-${String(bkk.getMonth()+1).padStart(2,'0')}-01`;
+
+  const [rows] = await p.execute(
+    `SELECT id, type, amount, category, note, entry_date, created_at
+     FROM cash_entries
+     ORDER BY entry_date DESC, id DESC
+     LIMIT 500`
+  );
+
+  const [[todaySum]] = await p.execute(
+    `SELECT
+      COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income,
+      COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0) AS expense
+     FROM cash_entries
+     WHERE entry_date = ?`,
+    [today]
+  );
+
+  const [[monthSum]] = await p.execute(
+    `SELECT
+      COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income,
+      COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0) AS expense
+     FROM cash_entries
+     WHERE entry_date >= ?`,
+    [monthStart]
+  );
+
+  const catOptions = CASH_CATEGORIES.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+
+  const body = `
+  <div class="card">
+    <div class="actions" style="justify-content:space-between;align-items:center">
+      <div>
+        <h2 style="margin:0">รายรับ/รายจ่าย</h2>
+        <div class="muted">บันทึกแยกจากออเดอร์</div>
+      </div>
+      <button type="button" id="btnNewCash">+ เพิ่มรายการ</button>
+    </div>
+
+    <div style="height:12px"></div>
+
+    <div class="row">
+      <div class="card" style="margin:0">
+        <div class="muted">วันนี้ (${escapeHtml(today)})</div>
+        <div class="actions" style="justify-content:space-between">
+          <div><div class="muted">รายรับ</div><div style="font-weight:900;font-size:18px">${Number(todaySum.income||0).toLocaleString('th-TH')}</div></div>
+          <div><div class="muted">รายจ่าย</div><div style="font-weight:900;font-size:18px">${Number(todaySum.expense||0).toLocaleString('th-TH')}</div></div>
+          <div><div class="muted">คงเหลือ</div><div style="font-weight:900;font-size:18px">${Number((todaySum.income||0)-(todaySum.expense||0)).toLocaleString('th-TH')}</div></div>
+        </div>
+      </div>
+      <div class="card" style="margin:0">
+        <div class="muted">เดือนนี้ (ตั้งแต่ ${escapeHtml(monthStart)})</div>
+        <div class="actions" style="justify-content:space-between">
+          <div><div class="muted">รายรับ</div><div style="font-weight:900;font-size:18px">${Number(monthSum.income||0).toLocaleString('th-TH')}</div></div>
+          <div><div class="muted">รายจ่าย</div><div style="font-weight:900;font-size:18px">${Number(monthSum.expense||0).toLocaleString('th-TH')}</div></div>
+          <div><div class="muted">คงเหลือ</div><div style="font-weight:900;font-size:18px">${Number((monthSum.income||0)-(monthSum.expense||0)).toLocaleString('th-TH')}</div></div>
+        </div>
+      </div>
+    </div>
+
+    <dialog id="dlgNewCash" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+      <form method="post" action="/admin/cash/create?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">เพิ่มรายการ</h3>
+          <button type="button" class="secondary" id="btnCloseNewCash">ปิด</button>
+        </div>
+
+        <div style="height:12px"></div>
+        <div class="row3">
+          <div>
+            <div class="muted">ประเภท</div>
+            <select name="type" required>
+              <option value="income">รายรับ</option>
+              <option value="expense">รายจ่าย</option>
+            </select>
+          </div>
+          <div>
+            <div class="muted">จำนวนเงิน</div>
+            <input name="amount" type="number" step="0.01" required />
+          </div>
+          <div>
+            <div class="muted">วันที่</div>
+            <input name="entry_date" type="date" value="${escapeHtml(today)}" required />
+          </div>
+        </div>
+        <div style="height:10px"></div>
+        <div class="row">
+          <div>
+            <div class="muted">หมวดหมู่</div>
+            <select name="category" required>${catOptions}</select>
+          </div>
+          <div>
+            <div class="muted">หมายเหตุ</div>
+            <input name="note" placeholder="เช่น ซื้อหมูบด" />
+          </div>
+        </div>
+
+        <div style="height:14px"></div>
+        <div class="actions" style="justify-content:flex-end">
+          <button type="button" class="secondary" id="btnCancelNewCash">ยกเลิก</button>
+          <button type="submit">บันทึก</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlgCashDetail" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+      <div class="card" style="border:none;margin:0">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0" id="cashTitle">รายละเอียด</h3>
+          <button type="button" class="secondary" id="btnCloseCashDetail">ปิด</button>
+        </div>
+
+        <form method="post" action="/admin/cash/update?token=${escapeHtml(ADMIN_TOKEN)}" style="margin:0">
+          <input type="hidden" name="id" id="cash_id" />
+
+          <div style="height:12px"></div>
+          <div class="row3">
+            <div>
+              <div class="muted">ประเภท</div>
+              <select name="type" id="cash_type" required>
+                <option value="income">รายรับ</option>
+                <option value="expense">รายจ่าย</option>
+              </select>
+            </div>
+            <div>
+              <div class="muted">จำนวนเงิน</div>
+              <input name="amount" id="cash_amount" type="number" step="0.01" required />
+            </div>
+            <div>
+              <div class="muted">วันที่</div>
+              <input name="entry_date" id="cash_date" type="date" required />
+            </div>
+          </div>
+          <div style="height:10px"></div>
+          <div class="row">
+            <div>
+              <div class="muted">หมวดหมู่</div>
+              <select name="category" id="cash_category" required>${catOptions}</select>
+            </div>
+            <div>
+              <div class="muted">หมายเหตุ</div>
+              <input name="note" id="cash_note" />
+            </div>
+          </div>
+
+          <div style="height:14px"></div>
+          <div class="actions" style="justify-content:flex-end">
+            <button type="submit">บันทึก</button>
+          </div>
+        </form>
+
+        <div style="height:10px"></div>
+        <form method="post" action="/admin/cash/delete?token=${escapeHtml(ADMIN_TOKEN)}" onsubmit="return confirm('ลบรายการนี้?')" style="margin:0">
+          <input type="hidden" name="id" id="cash_delete_id" />
+          <button type="submit" class="danger">ลบ</button>
+        </form>
+      </div>
+    </dialog>
+
+    <div style="height:12px"></div>
+    <div class="card" style="padding:0">
+      ${rows.map(r => {
+        const sign = r.type === 'income' ? '+' : '-';
+        const color = r.type === 'income' ? '#0b6' : '#b00020';
+        return `
+          <button type="button" class="secondary" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px" onclick="openCashDetail(${escapeHtml(JSON.stringify(r.id))})">
+            <div class="actions" style="justify-content:space-between;align-items:flex-start">
+              <div>
+                <div><b>${escapeHtml(r.category)}</b></div>
+                <div class="muted">${escapeHtml(String(r.entry_date).slice(0,10))}${r.note ? ' · ' + escapeHtml(r.note) : ''}</div>
+              </div>
+              <div style="font-weight:900;color:${color}">${sign}${Number(r.amount||0).toLocaleString('th-TH')}</div>
+            </div>
+          </button>
+        `;
+      }).join('')}
+    </div>
+
+    <script>
+      (function(){
+        var rows = ${JSON.stringify(rows).replace(/</g,'\\u003c')};
+        var byId = new Map(rows.map(r => [Number(r.id), r]));
+
+        var dlgNew = document.getElementById('dlgNewCash');
+        var btnNew = document.getElementById('btnNewCash');
+        var btnCloseNew = document.getElementById('btnCloseNewCash');
+        var btnCancelNew = document.getElementById('btnCancelNewCash');
+
+        var dlgD = document.getElementById('dlgCashDetail');
+        var btnCloseD = document.getElementById('btnCloseCashDetail');
+
+        var elId = document.getElementById('cash_id');
+        var elType = document.getElementById('cash_type');
+        var elAmt = document.getElementById('cash_amount');
+        var elCat = document.getElementById('cash_category');
+        var elNote = document.getElementById('cash_note');
+        var elDate = document.getElementById('cash_date');
+        var delId = document.getElementById('cash_delete_id');
+
+        function openDlg(d){ if(d && d.showModal) d.showModal(); else if(d) d.setAttribute('open','open'); }
+        function closeDlg(d){ if(d && d.close) d.close(); else if(d) d.removeAttribute('open'); }
+
+        if (btnNew) btnNew.addEventListener('click', function(){ openDlg(dlgNew); });
+        if (btnCloseNew) btnCloseNew.addEventListener('click', function(){ closeDlg(dlgNew); });
+        if (btnCancelNew) btnCancelNew.addEventListener('click', function(){ closeDlg(dlgNew); });
+
+        window.openCashDetail = function(id){
+          var r = byId.get(Number(id));
+          if(!r) return;
+          elId.value = r.id;
+          delId.value = r.id;
+          elType.value = r.type;
+          elAmt.value = String(r.amount||0);
+          elCat.value = r.category;
+          elNote.value = r.note || '';
+          elDate.value = String(r.entry_date).slice(0,10);
+          openDlg(dlgD);
+        };
+
+        if (btnCloseD) btnCloseD.addEventListener('click', function(){ closeDlg(dlgD); });
+      })();
+    </script>
+  </div>
+  `;
+
+  res.type('html').send(adminLayout({ title: 'รายรับรายจ่าย', active: 'cash', msg: req.query.msg ? String(req.query.msg) : '', body }));
+});
+
+app.post('/admin/cash/create', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { type, amount, category, note, entry_date } = req.body || {};
+  const tp = (type === 'income' || type === 'expense') ? type : null;
+  const amt = Number(amount);
+  const cat = String(category||'').trim();
+  const nt = String(note||'').trim();
+  const d = String(entry_date||'').slice(0,10);
+
+  if (!tp) return redirectAdminTo(res, '/admin/cash', 'type ไม่ถูกต้อง');
+  if (!Number.isFinite(amt) || amt <= 0) return redirectAdminTo(res, '/admin/cash', 'จำนวนเงินไม่ถูกต้อง');
+  if (!cat) return redirectAdminTo(res, '/admin/cash', 'หมวดหมู่หาย');
+  if (!d) return redirectAdminTo(res, '/admin/cash', 'วันที่หาย');
+
+  const p = await db();
+  await p.execute(
+    'INSERT INTO cash_entries(type,amount,category,note,entry_date) VALUES (?,?,?,?,?)',
+    [tp, amt, cat, nt, d]
+  );
+  return redirectAdminTo(res, '/admin/cash', 'บันทึกแล้ว');
+});
+
+app.post('/admin/cash/update', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { id, type, amount, category, note, entry_date } = req.body || {};
+  const cid = Number(id);
+  const tp = (type === 'income' || type === 'expense') ? type : null;
+  const amt = Number(amount);
+  const cat = String(category||'').trim();
+  const nt = String(note||'').trim();
+  const d = String(entry_date||'').slice(0,10);
+
+  if (!cid) return redirectAdminTo(res, '/admin/cash', 'id หาย');
+  if (!tp) return redirectAdminTo(res, '/admin/cash', 'type ไม่ถูกต้อง');
+  if (!Number.isFinite(amt) || amt <= 0) return redirectAdminTo(res, '/admin/cash', 'จำนวนเงินไม่ถูกต้อง');
+  if (!cat) return redirectAdminTo(res, '/admin/cash', 'หมวดหมู่หาย');
+  if (!d) return redirectAdminTo(res, '/admin/cash', 'วันที่หาย');
+
+  const p = await db();
+  await p.execute(
+    'UPDATE cash_entries SET type=?, amount=?, category=?, note=?, entry_date=? WHERE id=?',
+    [tp, amt, cat, nt, d, cid]
+  );
+  return redirectAdminTo(res, '/admin/cash', 'บันทึกแล้ว');
+});
+
+app.post('/admin/cash/delete', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const cid = Number((req.body && req.body.id) || 0);
+  if (!cid) return redirectAdminTo(res, '/admin/cash', 'id หาย');
+  const p = await db();
+  await p.execute('DELETE FROM cash_entries WHERE id=?', [cid]);
+  return redirectAdminTo(res, '/admin/cash', 'ลบแล้ว');
+});
+
 
 // --- customer order pages (minimal; full UX can be re-added) ---
 app.get('/c/:customerToken', async (req, res) => {
