@@ -1054,11 +1054,14 @@ app.get('/admin/cash', async (req, res) => {
           var isIncome = (t !== 'expense');
           var wrapC = document.getElementById('wrap_cash_customer');
           var wrapP = document.getElementById('wrap_cash_partner');
-          if (wrapC) wrapC.style.opacity = isIncome ? '1' : '0.5';
-          if (wrapP) wrapP.style.opacity = isIncome ? '0.5' : '1';
-          if (elCustLabel) elCustLabel.disabled = !isIncome;
-          if (elPartnerName) elPartnerName.disabled = isIncome;
+
+          if (wrapC) wrapC.style.display = isIncome ? '' : 'none';
+          if (wrapP) wrapP.style.display = isIncome ? 'none' : '';
+
+          if (elCustLabel) { elCustLabel.required = !!isIncome; elCustLabel.disabled = !isIncome; if(!isIncome) elCustLabel.value=''; }
+          if (elPartnerName) { elPartnerName.required = !isIncome; elPartnerName.disabled = isIncome; if(isIncome) elPartnerName.value=''; }
         }
+
 
         var elDate = document.getElementById('cash_date');
         var delId = document.getElementById('cash_delete_id');
@@ -1074,21 +1077,15 @@ app.get('/admin/cash', async (req, res) => {
           var inC = document.getElementById('new_cash_customer_label');
           var inP = document.getElementById('new_cash_partner_name');
 
-          if (inp) inp.value = (t==='expense'?'expense':'income');
-          if (lab) lab.textContent = (t==='expense'?'รายจ่าย':'รายรับ');
-
           var isIncome = (t !== 'expense');
-          if (wrapC) wrapC.style.opacity = isIncome ? '1' : '0.5';
-          if (wrapP) wrapP.style.opacity = isIncome ? '0.5' : '1';
-          if (inC) inC.disabled = !isIncome;
-          if (inP) inP.disabled = isIncome;
+          if (inp) inp.value = (isIncome ? 'income' : 'expense');
+          if (lab) lab.textContent = (isIncome ? 'รายรับ' : 'รายจ่าย');
 
-          // Clear the other side to avoid accidental mixed data
-          if (isIncome) {
-            if (inP) inP.value = '';
-          } else {
-            if (inC) inC.value = '';
-          }
+          if (wrapC) wrapC.style.display = isIncome ? '' : 'none';
+          if (wrapP) wrapP.style.display = isIncome ? 'none' : '';
+
+          if (inC) { inC.required = !!isIncome; inC.disabled = !isIncome; if(!isIncome) inC.value=''; }
+          if (inP) { inP.required = !isIncome; inP.disabled = isIncome; if(isIncome) inP.value=''; }
         }
 
         if (btnNewIncome) btnNewIncome.addEventListener('click', function(){ setNewType('income'); openDlg(dlgNew); });
