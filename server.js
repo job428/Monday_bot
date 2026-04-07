@@ -676,7 +676,7 @@ app.get('/game', async (req, res) => {
       // - baseZoom: auto cover zoom to fill screen
       // - userZoom: pinch multiplier (no camera zoom)
       var baseZoom = 1;
-      var userZoom = 1;
+      var userZoom = 0.5;
 
       function applyZoom(){
         try{
@@ -735,6 +735,7 @@ app.get('/game', async (req, res) => {
       }
       window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
       setTimeout(onResize, 50);
+      setTimeout(applyZoom, 80);
 
       function preload(){
         // generate simple textures at runtime (no assets yet)
