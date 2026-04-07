@@ -891,6 +891,9 @@ app.get('/game', async (req, res) => {
 
         var cam = this.cameras.main;
 
+        // Debug overlay (temporary)
+        var dbgText = this.add.text(8, 8, '', {fontFamily:'monospace', fontSize:'10px', color:'#ffd27a', backgroundColor:'rgba(0,0,0,0.35)', padding:{x:4,y:3}}).setScrollFactor(0);
+
         function maxScrollX(){
           return Math.max(0, worldW - W);
         }
@@ -901,12 +904,26 @@ app.get('/game', async (req, res) => {
 
         // Update edge fades
         this.events.on('postupdate', function(){
+          try{
+            var p1 = this.input.pointer1;
+            var p2 = this.input.pointer2;
+            var p3 = this.input.pointer3;
+            var d = (p1 && p2 && p1.isDown && p2.isDown) ? Math.hypot(p1.x-p2.x, p1.y-p2.y) : 0;
+            dbgText.setText([
+              'p1:' + (p1 && p1.isDown ? 'down' : 'up') + ' ' + (p1? (p1.x.toFixed(0)+','+p1.y.toFixed(0)):'-'),
+              'p2:' + (p2 && p2.isDown ? 'down' : 'up') + ' ' + (p2? (p2.x.toFixed(0)+','+p2.y.toFixed(0)):'-'),
+              'dist:' + d.toFixed(1),
+              'userZoom:' + (typeof userZoom==='number'?userZoom.toFixed(2):String(userZoom)),
+              'scaleZoom:' + (this.sys.game.scale.zoom ? this.sys.game.scale.zoom.toFixed(2) : 'n/a'),
+            ]);
+          }catch(e){}
+
           var maxX = maxScrollX();
           var atL = maxX <= 0 ? 1 : (1 - Phaser.Math.Clamp(cam.scrollX / 24, 0, 1));
           var atR = maxX <= 0 ? 1 : (1 - Phaser.Math.Clamp((maxX - cam.scrollX) / 24, 0, 1));
           edgeL.alpha = 0.45 * atL;
           edgeR.alpha = 0.45 * atR;
-        });
+        }, this);
 
         // Horizontal pan (drag to scroll)
         var isPanning = false;
