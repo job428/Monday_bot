@@ -664,7 +664,7 @@ app.get('/game', async (req, res) => {
           touch: { capture: true }
         },
         scale: {
-          mode: Phaser.Scale.FIT,
+          mode: Phaser.Scale.NONE,
           autoCenter: Phaser.Scale.CENTER_BOTH,
           parent: 'game',
           width: W,
