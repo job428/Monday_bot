@@ -642,7 +642,7 @@ app.get('/game', async (req, res) => {
       if (br) br.addEventListener('click', function(){ location.reload(); });
 
       // Pixel-art feel: low resolution internal canvas + no smoothing.
-      var W = 320, H = 180; // internal resolution
+      var W = 180, H = 320; // internal resolution (portrait)
 
       function containerSize(){
         var el = document.getElementById('game');
@@ -821,16 +821,16 @@ app.get('/game', async (req, res) => {
         this.add.image(doorX, doorY, 'door').setOrigin(0,0);
 
         // Counter near front
-        this.add.image(tile*5, tile*9, 'counter').setOrigin(0,0);
-        this.add.image(tile*7, tile*9, 'counter').setOrigin(0,0);
+        this.add.image(Math.floor(worldW/2) - tile*2, tile*12, 'counter').setOrigin(0,0);
+        this.add.image(Math.floor(worldW/2), tile*12, 'counter').setOrigin(0,0);
 
         // Shelves
-        this.add.image(tile*3, tile*4, 'shelf').setOrigin(0,0);
-        this.add.image(tile*11, tile*4, 'shelf').setOrigin(0,0);
+        this.add.image(Math.floor(worldW/2) - tile*6, tile*6, 'shelf').setOrigin(0,0);
+        this.add.image(Math.floor(worldW/2) + tile*4, tile*6, 'shelf').setOrigin(0,0);
 
         // Sign
-        this.add.image(tile*8, tile*1, 'sign').setOrigin(0.5,0);
-        this.add.text(tile*8, tile*1+4, 'VEG SHOP', {fontFamily:'monospace', fontSize:'10px', color:'#d9fbe1'}).setOrigin(0.5,0);
+        this.add.image(Math.floor(worldW/2), tile*1, 'sign').setOrigin(0.5,0);
+        this.add.text(Math.floor(worldW/2), tile*1+4, 'VEG SHOP', {fontFamily:'monospace', fontSize:'10px', color:'#d9fbe1'}).setOrigin(0.5,0);
 
         // Simple ambient overlay
         var r = this.add.rectangle(W/2, H/2, W, H, 0x000000, 0.12);
