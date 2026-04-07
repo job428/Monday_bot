@@ -620,7 +620,7 @@ app.get('/game', async (req, res) => {
     a{color:#9ae6b4;text-decoration:none}
     .hint{color:#b7c0cc;font-size:12px}
     #game{position:fixed;left:0;right:0;top:0;bottom:0;overflow:hidden;background:#111;touch-action:none;border-radius:0;border:0}
-    #game canvas{touch-action:none;position:absolute;left:0;top:0}
+    #game canvas{touch-action:none;position:absolute;left:0;top:0;width:100% !important;height:100% !important}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
@@ -850,7 +850,6 @@ app.get('/game', async (req, res) => {
         
 
         // Zoom indicator (temporary)
-        var zoomHud = this.add.text(8, 8, '', {fontFamily:'monospace', fontSize:'10px', color:'#ffd27a', backgroundColor:'rgba(0,0,0,0.35)', padding:{x:4,y:3}}).setScrollFactor(0);
 this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ถ่าง/หุบเพื่อซูม', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setOrigin(0.5,0).setScrollFactor(0);
 
         var cam = this.cameras.main;
@@ -870,12 +869,6 @@ this.add.text(W/2, H-14, 'ลากซ้าย/ขวาเพื่อเล�
 
           try{
             var t = (this.input && this.input.manager && this.input.manager.pointers) ? this.input.manager.pointers.filter(p=>p && p.isDown).length : 0;
-            var down = 0;
-            try{
-              var ps = (this.input && this.input.manager && this.input.manager.pointers) ? this.input.manager.pointers : [];
-              for (var i=0;i<ps.length;i++){ if (ps[i] && ps[i].isDown) down++; }
-            }catch(_){}
-            zoomHud.setText('zoom:' + (this.sys.game.scale.zoom ? this.sys.game.scale.zoom.toFixed(2) : 'n/a') + '  touches:' + down);
           }catch(e){}
 
           var maxX = maxScrollX();
