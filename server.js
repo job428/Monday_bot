@@ -612,12 +612,13 @@ app.get('/game', async (req, res) => {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Veg Shop (Prototype)</title>
   <style>
-    body{margin:0;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
-    #wrap{width:100vw;height:100vh;box-sizing:border-box;padding:12px;display:flex;flex-direction:column}
-    .top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
+    body{position:fixed;inset:0}
+    #wrap{position:fixed;inset:0;box-sizing:border-box;padding:0;display:block}
+    .top{position:fixed;left:0;right:0;top:0;z-index:10;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px; padding-top:calc(12px + env(safe-area-inset-top));background:linear-gradient(#0b0f14 70%, rgba(11,15,20,0));}
     a{color:#9ae6b4;text-decoration:none}
     .hint{color:#b7c0cc;font-size:12px}
-    #game{flex:1;min-height:0;border:1px solid #243041;border-radius:14px;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center;touch-action:none}
+    #game{position:fixed;inset:0;overflow:hidden;background:#111;touch-action:none}
     #game canvas{touch-action:none}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
