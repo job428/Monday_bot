@@ -884,7 +884,10 @@ app.get('/admin/cash', async (req, res) => {
         <h2 style="margin:0">รายรับ/รายจ่าย</h2>
         <div class="muted">บันทึกแยกจากออเดอร์</div>
       </div>
-      <button type="button" id="btnNewCash">+ เพิ่มรายการ</button>
+      <div class="actions" style="gap:8px">
+        <button type="button" id="btnNewIncome" style="background:#0b6;border-color:#0b6">+ เพิ่มรายรับ</button>
+        <button type="button" id="btnNewExpense" style="background:#b00020;border-color:#b00020">+ เพิ่มรายจ่าย</button>
+      </div>
     </div>
 
     <div style="height:12px"></div>
@@ -916,13 +919,11 @@ app.get('/admin/cash', async (req, res) => {
         </div>
 
         <div style="height:12px"></div>
+        <input type="hidden" name="type" id="new_cash_type" value="income" />
         <div class="row3">
           <div>
             <div class="muted">ประเภท</div>
-            <select name="type" required>
-              <option value="income">รายรับ</option>
-              <option value="expense">รายจ่าย</option>
-            </select>
+            <div id="new_cash_type_label" style="font-weight:900">รายรับ</div>
           </div>
           <div>
             <div class="muted">จำนวนเงิน</div>
@@ -935,7 +936,7 @@ app.get('/admin/cash', async (req, res) => {
         </div>
         <div style="height:10px"></div>
         <div class="row">
-          <div>
+          <div id="wrap_new_customer">
             <div class="muted">รับจาก (ลูกค้า)</div>
             <select name="customer_token" id="new_cash_customer">
               <option value="">(พิมพ์ชื่อเอง)</option>
@@ -948,7 +949,7 @@ app.get('/admin/cash', async (req, res) => {
             <div class="muted">หมายเหตุ</div>
             <input name="note" placeholder="เช่น ซื้อหมูบด" />
           </div>
-          <div>
+          <div id="wrap_new_partner">
             <div class="muted">จ่ายให้ (พาร์ทเนอร์)</div>
             <select name="partner_id" id="new_cash_partner">
               <option value="">(พิมพ์ชื่อเอง)</option>
@@ -997,7 +998,7 @@ app.get('/admin/cash', async (req, res) => {
           </div>
           <div style="height:10px"></div>
           <div class="row">
-            <div>
+            <div id="wrap_cash_customer">
               <div class="muted">รับจาก (ลูกค้า)</div>
               <select name="customer_token" id="cash_customer">
                 <option value="">(พิมพ์ชื่อเอง)</option>
@@ -1010,7 +1011,7 @@ app.get('/admin/cash', async (req, res) => {
               <div class="muted">หมายเหตุ</div>
               <input name="note" id="cash_note" />
             </div>
-            <div>
+            <div id="wrap_cash_partner">
               <div class="muted">จ่ายให้ (พาร์ทเนอร์)</div>
               <select name="partner_id" id="cash_partner">
                 <option value="">(พิมพ์ชื่อเอง)</option>
@@ -1060,7 +1061,8 @@ app.get('/admin/cash', async (req, res) => {
         var byId = new Map(rows.map(r => [Number(r.id), r]));
 
         var dlgNew = document.getElementById('dlgNewCash');
-        var btnNew = document.getElementById('btnNewCash');
+        var btnNewIncome = document.getElementById('btnNewIncome');
+        var btnNewExpense = document.getElementById('btnNewExpense');
         var btnCloseNew = document.getElementById('btnCloseNewCash');
         var btnCancelNew = document.getElementById('btnCancelNewCash');
 
@@ -1075,13 +1077,58 @@ app.get('/admin/cash', async (req, res) => {
         var elCustLabel = document.getElementById('cash_customer_label');
         var elPartner = document.getElementById('cash_partner');
         var elPartnerName = document.getElementById('cash_partner_name');
+
+        function toggleCashType(t){
+          var isIncome = (t !== 'expense');
+          var wrapC = document.getElementById('wrap_cash_customer');
+          var wrapP = document.getElementById('wrap_cash_partner');
+          if (wrapC) wrapC.style.opacity = isIncome ? '1' : '0.5';
+          if (wrapP) wrapP.style.opacity = isIncome ? '0.5' : '1';
+          if (elCust) elCust.disabled = !isIncome;
+          if (elCustLabel) elCustLabel.disabled = !isIncome;
+          if (elPartner) elPartner.disabled = isIncome;
+          if (elPartnerName) elPartnerName.disabled = isIncome;
+        }
+
         var elDate = document.getElementById('cash_date');
         var delId = document.getElementById('cash_delete_id');
 
         function openDlg(d){ if(d && d.showModal) d.showModal(); else if(d) d.setAttribute('open','open'); }
         function closeDlg(d){ if(d && d.close) d.close(); else if(d) d.removeAttribute('open'); }
 
-        if (btnNew) btnNew.addEventListener('click', function(){ openDlg(dlgNew); });
+        function setNewType(t){
+          var inp = document.getElementById('new_cash_type');
+          var lab = document.getElementById('new_cash_type_label');
+          var wrapC = document.getElementById('wrap_new_customer');
+          var wrapP = document.getElementById('wrap_new_partner');
+          var selC = document.getElementById('new_cash_customer');
+          var inC = document.getElementById('new_cash_customer_label');
+          var selP = document.getElementById('new_cash_partner');
+          var inP = document.getElementById('new_cash_partner_name');
+
+          if (inp) inp.value = (t==='expense'?'expense':'income');
+          if (lab) lab.textContent = (t==='expense'?'รายจ่าย':'รายรับ');
+
+          var isIncome = (t !== 'expense');
+          if (wrapC) wrapC.style.opacity = isIncome ? '1' : '0.5';
+          if (wrapP) wrapP.style.opacity = isIncome ? '0.5' : '1';
+          if (selC) selC.disabled = !isIncome;
+          if (inC) inC.disabled = !isIncome;
+          if (selP) selP.disabled = isIncome;
+          if (inP) inP.disabled = isIncome;
+
+          // Clear the other side to avoid accidental mixed data
+          if (isIncome) {
+            if (selP) selP.value = '';
+            if (inP) inP.value = '';
+          } else {
+            if (selC) selC.value = '';
+            if (inC) inC.value = '';
+          }
+        }
+
+        if (btnNewIncome) btnNewIncome.addEventListener('click', function(){ setNewType('income'); openDlg(dlgNew); });
+        if (btnNewExpense) btnNewExpense.addEventListener('click', function(){ setNewType('expense'); openDlg(dlgNew); });
         if (btnCloseNew) btnCloseNew.addEventListener('click', function(){ closeDlg(dlgNew); });
         if (btnCancelNew) btnCancelNew.addEventListener('click', function(){ closeDlg(dlgNew); });
 
@@ -1091,6 +1138,7 @@ app.get('/admin/cash', async (req, res) => {
           elId.value = r.id;
           delId.value = r.id;
           elType.value = r.type;
+          toggleCashType(r.type);
           elAmt.value = String(r.amount||0);
           elNote.value = r.note || '';
           if (elCust) elCust.value = r.customer_token || '';
@@ -1101,6 +1149,7 @@ app.get('/admin/cash', async (req, res) => {
           openDlg(dlgD);
         };
 
+        if (elType) elType.addEventListener('change', function(){ toggleCashType(elType.value); });
         if (btnCloseD) btnCloseD.addEventListener('click', function(){ closeDlg(dlgD); });
       })();
     </script>
