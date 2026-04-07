@@ -684,11 +684,42 @@ app.get('/game', async (req, res) => {
           game.scale.setZoom(z);
         }catch(e){}
 
-        // iOS Safari: prevent browser pinch/scroll gestures on the canvas
+        // iOS (Add to Home / Safari): handle pinch ourselves and prevent page gestures
         try{
           var c2 = this.sys.game.canvas;
-          c2.addEventListener('touchstart', function(e){ e.preventDefault(); }, {passive:false});
-          c2.addEventListener('touchmove', function(e){ e.preventDefault(); }, {passive:false});
+          var pinchStartDist = 0;
+          var pinchStartZoom = 1;
+
+          function tdist(t0, t1){
+            var dx = t0.clientX - t1.clientX;
+            var dy = t0.clientY - t1.clientY;
+            return Math.sqrt(dx*dx + dy*dy);
+          }
+
+          c2.addEventListener('touchstart', function(e){
+            if (e.touches && e.touches.length >= 2) {
+              pinchStartDist = tdist(e.touches[0], e.touches[1]);
+              pinchStartZoom = userZoom;
+            }
+            e.preventDefault();
+          }, {passive:false});
+
+          c2.addEventListener('touchmove', function(e){
+            if (e.touches && e.touches.length >= 2 && pinchStartDist > 0) {
+              var d = tdist(e.touches[0], e.touches[1]);
+              var ratio = d / pinchStartDist;
+              userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.75, 2.5);
+              applyZoom();
+            }
+            e.preventDefault();
+          }, {passive:false});
+
+          c2.addEventListener('touchend', function(e){
+            if (!e.touches || e.touches.length < 2) {
+              pinchStartDist = 0;
+            }
+            e.preventDefault();
+          }, {passive:false});
         }catch(e){}
       }
 
@@ -700,11 +731,42 @@ app.get('/game', async (req, res) => {
           applyZoom();
         }catch(e){}
 
-        // iOS Safari: prevent browser pinch/scroll gestures on the canvas
+        // iOS (Add to Home / Safari): handle pinch ourselves and prevent page gestures
         try{
           var c2 = this.sys.game.canvas;
-          c2.addEventListener('touchstart', function(e){ e.preventDefault(); }, {passive:false});
-          c2.addEventListener('touchmove', function(e){ e.preventDefault(); }, {passive:false});
+          var pinchStartDist = 0;
+          var pinchStartZoom = 1;
+
+          function tdist(t0, t1){
+            var dx = t0.clientX - t1.clientX;
+            var dy = t0.clientY - t1.clientY;
+            return Math.sqrt(dx*dx + dy*dy);
+          }
+
+          c2.addEventListener('touchstart', function(e){
+            if (e.touches && e.touches.length >= 2) {
+              pinchStartDist = tdist(e.touches[0], e.touches[1]);
+              pinchStartZoom = userZoom;
+            }
+            e.preventDefault();
+          }, {passive:false});
+
+          c2.addEventListener('touchmove', function(e){
+            if (e.touches && e.touches.length >= 2 && pinchStartDist > 0) {
+              var d = tdist(e.touches[0], e.touches[1]);
+              var ratio = d / pinchStartDist;
+              userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.75, 2.5);
+              applyZoom();
+            }
+            e.preventDefault();
+          }, {passive:false});
+
+          c2.addEventListener('touchend', function(e){
+            if (!e.touches || e.touches.length < 2) {
+              pinchStartDist = 0;
+            }
+            e.preventDefault();
+          }, {passive:false});
         }catch(e){}
       }
       window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
@@ -765,11 +827,42 @@ app.get('/game', async (req, res) => {
           c.style.imageRendering = 'crisp-edges';
         }catch(e){}
 
-        // iOS Safari: prevent browser pinch/scroll gestures on the canvas
+        // iOS (Add to Home / Safari): handle pinch ourselves and prevent page gestures
         try{
           var c2 = this.sys.game.canvas;
-          c2.addEventListener('touchstart', function(e){ e.preventDefault(); }, {passive:false});
-          c2.addEventListener('touchmove', function(e){ e.preventDefault(); }, {passive:false});
+          var pinchStartDist = 0;
+          var pinchStartZoom = 1;
+
+          function tdist(t0, t1){
+            var dx = t0.clientX - t1.clientX;
+            var dy = t0.clientY - t1.clientY;
+            return Math.sqrt(dx*dx + dy*dy);
+          }
+
+          c2.addEventListener('touchstart', function(e){
+            if (e.touches && e.touches.length >= 2) {
+              pinchStartDist = tdist(e.touches[0], e.touches[1]);
+              pinchStartZoom = userZoom;
+            }
+            e.preventDefault();
+          }, {passive:false});
+
+          c2.addEventListener('touchmove', function(e){
+            if (e.touches && e.touches.length >= 2 && pinchStartDist > 0) {
+              var d = tdist(e.touches[0], e.touches[1]);
+              var ratio = d / pinchStartDist;
+              userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.75, 2.5);
+              applyZoom();
+            }
+            e.preventDefault();
+          }, {passive:false});
+
+          c2.addEventListener('touchend', function(e){
+            if (!e.touches || e.touches.length < 2) {
+              pinchStartDist = 0;
+            }
+            e.preventDefault();
+          }, {passive:false});
         }catch(e){}
 
         var tile = 16;
