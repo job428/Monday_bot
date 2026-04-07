@@ -655,7 +655,7 @@ app.get('/game', async (req, res) => {
         height: H,
         pixelArt: true,
         scale: {
-          mode: Phaser.Scale.FIT,
+          mode: Phaser.Scale.ENVELOP,
           autoCenter: Phaser.Scale.CENTER_BOTH,
           parent: 'game',
           width: W,
@@ -670,7 +670,9 @@ app.get('/game', async (req, res) => {
         try{
           var s = containerSize();
           game.scale.resize(W, H);
-          game.scale.setZoom(Math.max(1, Math.floor(Math.min(s.w / W, s.h / H))));
+          var z = Math.max(s.w / W, s.h / H);
+          z = Math.max(1, Math.round(z * 4) / 4);
+          game.scale.setZoom(z);
         }catch(e){}
       }
       window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
@@ -732,26 +734,33 @@ app.get('/game', async (req, res) => {
         }catch(e){}
 
         var tile = 16;
-        var cols = Math.floor(W/tile);
-        var rows = Math.floor(H/tile);
+        var viewCols = Math.floor(W/tile);
+        var viewRows = Math.floor(H/tile);
+        // make world wider than viewport for horizontal panning
+        var worldCols = viewCols * 3;
+        var worldRows = viewRows;
+        var worldW = worldCols * tile;
+        var worldH = worldRows * tile;
+
+        this.cameras.main.setBounds(0, 0, worldW, worldH);
 
         // Floor
-        for (var y=0; y<rows; y++){
-          for (var x=0; x<cols; x++){
+        for (var y=0; y<worldRows; y++){
+          for (var x=0; x<worldCols; x++){
             this.add.image(x*tile, y*tile, 'tile_wood').setOrigin(0,0);
           }
         }
 
         // Walls (top + left + right)
-        for (var x=0; x<cols; x++) this.add.image(x*tile, 0, 'tile_wall').setOrigin(0,0);
-        for (var y=0; y<rows; y++){
+        for (var x=0; x<worldCols; x++) this.add.image(x*tile, 0, 'tile_wall').setOrigin(0,0);
+        for (var y=0; y<worldRows; y++){
           this.add.image(0, y*tile, 'tile_wall').setOrigin(0,0);
-          this.add.image((cols-1)*tile, y*tile, 'tile_wall').setOrigin(0,0);
+          this.add.image((worldCols-1)*tile, y*tile, 'tile_wall').setOrigin(0,0);
         }
 
         // Door at bottom center
-        var doorX = Math.floor(cols/2)*tile;
-        var doorY = (rows-1)*tile;
+        var doorX = Math.floor(worldCols/2)*tile;
+        var doorY = (worldRows-1)*tile;
         this.add.image(doorX, doorY, 'door').setOrigin(0,0);
 
         // Counter near front
@@ -767,11 +776,11 @@ app.get('/game', async (req, res) => {
         this.add.text(tile*8, tile*1+4, 'VEG SHOP', {fontFamily:'monospace', fontSize:'10px', color:'#d9fbe1'}).setOrigin(0.5,0);
 
         // Simple ambient overlay
-        var r = this.add.rectangle(W/2, H/2, W, H, 0x000000, 0.12);
+        var r = this.add.rectangle(W/2, H/2, W, H, 0x000000, 0.12);\n        r.setScrollFactor(0);
         r.setBlendMode(Phaser.BlendModes.MULTIPLY);
 
         // Small UI hint inside canvas
-        this.add.text(8, H-14, 'Scene only · next: drag/drop + animations', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'});
+        this.add.text(8, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setScrollFactor(0);\n\n        // Horizontal pan (drag to scroll)\n        var cam = this.cameras.main;\n        var isPanning = false;\n        var startX = 0;\n        var startScrollX = 0;\n\n        this.input.on('pointerdown', function(pointer){\n          isPanning = true;\n          startX = pointer.x;\n          startScrollX = cam.scrollX;\n        });\n        this.input.on('pointerup', function(){ isPanning = false; });\n        this.input.on('pointerout', function(){ isPanning = false; });\n        this.input.on('pointermove', function(pointer){\n          if(!isPanning) return;\n          var dx = pointer.x - startX;\n          cam.scrollX = Phaser.Math.Clamp(startScrollX - dx, 0, worldW - W);\n        });
       }
     })();
   </script>
