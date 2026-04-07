@@ -666,13 +666,27 @@ app.get('/game', async (req, res) => {
 
       var game = new Phaser.Game(config);
 
+      // Separate zoom layers:
+      // - baseZoom: auto cover zoom to fill screen
+      // - userZoom: pinch multiplier (no camera zoom)
+      var baseZoom = 1;
+      var userZoom = 1;
+
+      function applyZoom(){
+        try{
+          var z = baseZoom * userZoom;
+          // keep pixel-ish steps
+          z = Math.max(0.5, Math.min(6, Math.round(z * 4) / 4));
+          game.scale.setZoom(z);
+        }catch(e){}
+      }
+
       function onResize(){
         try{
           var s = containerSize();
           game.scale.resize(W, H);
-          var z = Math.max(s.w / W, s.h / H);
-          z = Math.max(1, Math.round(z * 4) / 4);
-          game.scale.setZoom(z);
+          baseZoom = Math.max(s.w / W, s.h / H);
+          applyZoom();
         }catch(e){}
       }
       window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
@@ -794,11 +808,9 @@ app.get('/game', async (req, res) => {
         this.add.text(8, H-14, 'ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ใช้ 2 นิ้วถ่าง/หุบเพื่อซูม', {fontFamily:'monospace', fontSize:'10px', color:'#b7c0cc'}).setScrollFactor(0);
 
         var cam = this.cameras.main;
-        var userZoom = 1.0;
-        cam.setZoom(userZoom);
 
         function maxScrollX(){
-          return Math.max(0, worldW - (W / cam.zoom));
+          return Math.max(0, worldW - W);
         }
 
         function clampScroll(){
@@ -877,7 +889,7 @@ app.get('/game', async (req, res) => {
           if (!pinchStartDist) return;
           var ratio = d / pinchStartDist;
           userZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, 0.75, 2.5);
-          cam.setZoom(userZoom);
+          applyZoom();
           clampScroll();
         }, this);
       }
