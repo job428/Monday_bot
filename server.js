@@ -280,9 +280,11 @@ function adminLayout({ title, active, msg, body }) {
     .seg{display:flex;justify-content:center;gap:10px;margin:10px 0}
 
     /* Segmented control (Today/Tomorrow) */
-    .segSwitch{display:flex;align-items:center;justify-content:space-between;gap:0; width:min(320px, 100%); background:#e6e6e6; border:1px solid #d0d0d0; border-radius:999px; padding:4px;}
-    .segBtn{flex:1; text-align:center; padding:10px 12px; border-radius:999px; font-weight:900; color:#111;}
-    .segBtn.on{background:#fff; box-shadow:0 2px 8px rgba(0,0,0,.12);}
+    .segSwitch{position:relative;display:flex;align-items:center;justify-content:space-between;gap:0; width:min(320px, 100%); background:#e6e6e6; border:1px solid #d0d0d0; border-radius:999px; padding:4px; overflow:hidden;}
+    .segKnob{position:absolute; left:4px; top:4px; bottom:4px; width:calc(50% - 4px); background:#fff; border-radius:999px; box-shadow:0 2px 8px rgba(0,0,0,.12); transform:translateX(var(--knob-x,0px)); transition:transform 160ms ease;}
+    .segSwitch.dragging .segKnob{transition:none;}
+    .segBtn{position:relative; z-index:1; flex:1; text-align:center; padding:10px 12px; border-radius:999px; font-weight:900; color:#111;}
+    .segBtn.on{background:transparent; box-shadow:none;}
 
     /* legacy toggle (kept in case used elsewhere) */
     .toggle{position:relative;width:74px;height:36px;border-radius:999px;background:#ddd;border:1px solid #cfcfcf;cursor:pointer;display:inline-flex;align-items:center;padding:4px;}
@@ -442,56 +444,91 @@ app.get('/admin/orders', async (req, res) => {
 
     <div class="seg" style="justify-content:center">
       <div class="segSwitch" id="dateSwitch" role="group" aria-label="แสดงรายการตามวัน">
+        <div class="segKnob" aria-hidden="true"></div>
         <a href="/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=today" class="segBtn ${dateTab==='today' ? 'on' : ''}" style="text-decoration:none">วันนี้</a>
         <a href="/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}&date=tomorrow" class="segBtn ${dateTab==='tomorrow' ? 'on' : ''}" style="text-decoration:none">พรุ่งนี้</a>
       </div>
     </div>
 
     <script>
-      // Swipe left/right to switch Today/Tomorrow (จับท่าปัดได้แม้ปัดบนพื้นที่ด้านบน ไม่ใช่แค่ปุ่ม)
+      // Swipe left/right to switch Today/Tomorrow (knob follows finger)
       (function(){
+        var sw = document.getElementById('dateSwitch');
+        if (!sw) return;
+        var knob = sw.querySelector('.segKnob');
         var active = ${JSON.stringify((dateTab==='tomorrow') ? 'tomorrow' : 'today')};
         var base = '/admin/orders?token=${t}&status=${encodeURIComponent(filterStatus)}';
+
+        function baseX(){
+          // knob moves one segment width
+          var w = sw.clientWidth - 8; // padding left+right
+          return (active === 'tomorrow') ? (w/2) : 0;
+        }
+
+        function setX(px){
+          sw.style.setProperty('--knob-x', px + 'px');
+        }
+
+        // init position
+        setX(baseX());
 
         function go(next){
           if (next === active) return;
           location.href = base + '&date=' + encodeURIComponent(next);
         }
 
-        var x0=null, y0=null;
+        var x0=null, y0=null, dragging=false;
+
         document.addEventListener('touchstart', function(e){
           if (!e.touches || e.touches.length !== 1) return;
           var t=e.touches[0];
-          // only if gesture starts near top area (avoid interfering with scrolling list)
           if (t.clientY > 220) return;
           x0=t.clientX; y0=t.clientY;
+          dragging=true;
+          sw.classList.add('dragging');
         }, {passive:true});
 
         document.addEventListener('touchmove', function(e){
-          if (x0==null||y0==null) return;
+          if (!dragging || x0==null||y0==null) return;
           var t=e.touches[0];
           var dx=t.clientX-x0;
           var dy=t.clientY-y0;
-          if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
-            if (e.cancelable) e.preventDefault();
-          }
+          if (Math.abs(dx) <= 8 || Math.abs(dx) < Math.abs(dy)) return;
+          if (e.cancelable) e.preventDefault();
+
+          var w = sw.clientWidth - 8;
+          var half = w/2;
+          var bx = baseX();
+          var x = bx + dx;
+          x = Math.max(0, Math.min(half, x));
+          setX(x);
         }, {passive:false});
 
         document.addEventListener('touchend', function(e){
-          if (x0==null||y0==null) return;
+          if (!dragging) return;
+          dragging=false;
+          sw.classList.remove('dragging');
+
           var t=(e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
-          if (!t) { x0=y0=null; return; }
+          if (!t) { x0=y0=null; setX(baseX()); return; }
+
           var dx=t.clientX-x0;
           var dy=t.clientY-y0;
           x0=y0=null;
-          if (Math.abs(dx) < 70) return;
-          if (Math.abs(dx) < Math.abs(dy)) return;
-          if (dx < 0) {
-            // swipe left
-            if (active === 'today') go('tomorrow');
-          } else {
-            // swipe right
-            if (active === 'tomorrow') go('today');
+
+          // snap decision
+          var w = sw.clientWidth - 8;
+          var half = w/2;
+          var bx = baseX();
+          var x = Math.max(0, Math.min(half, bx + dx));
+          var next = (x > half/2) ? 'tomorrow' : 'today';
+
+          // animate back to snapped position before navigating
+          active = next;
+          setX(baseX());
+
+          if (Math.abs(dx) > 20 && Math.abs(dx) > Math.abs(dy)) {
+            setTimeout(function(){ go(next); }, 80);
           }
         }, {passive:true});
       })();
