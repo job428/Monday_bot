@@ -679,7 +679,7 @@ app.get('/game', async (req, res) => {
       // - baseZoom: auto cover zoom to fill screen
       // - userZoom: pinch multiplier (no camera zoom)
       var baseZoom = 1;
-      var userZoom = 0.5;
+      var userZoom = 0.25;
 
       function applyZoom(){
         try{
