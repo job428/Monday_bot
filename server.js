@@ -613,11 +613,11 @@ app.get('/game', async (req, res) => {
   <title>Veg Shop (Prototype)</title>
   <style>
     body{margin:0;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
-    #wrap{max-width:980px;margin:0 auto;padding:14px}
+    #wrap{width:100vw;height:100vh;box-sizing:border-box;padding:12px;display:flex;flex-direction:column}
     .top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
     a{color:#9ae6b4;text-decoration:none}
     .hint{color:#b7c0cc;font-size:12px}
-    #game{border:1px solid #243041;border-radius:14px;overflow:hidden;background:#111}
+    #game{flex:1;min-height:0;border:1px solid #243041;border-radius:14px;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
@@ -638,7 +638,14 @@ app.get('/game', async (req, res) => {
     (function(){
       // Pixel-art feel: low resolution internal canvas + no smoothing.
       var W = 320, H = 180; // internal resolution
-      var SCALE = Math.min(3, Math.floor((Math.min(window.innerWidth, 980) - 28) / W) || 2);
+
+      function containerSize(){
+        var el = document.getElementById('game');
+        var r = el.getBoundingClientRect();
+        return { w: Math.max(1, Math.floor(r.width)), h: Math.max(1, Math.floor(r.height)) };
+      }
+
+      var sz = containerSize();
 
       var config = {
         type: Phaser.CANVAS,
@@ -646,12 +653,28 @@ app.get('/game', async (req, res) => {
         backgroundColor: '#0b0f14',
         width: W,
         height: H,
-        zoom: SCALE,
         pixelArt: true,
+        scale: {
+          mode: Phaser.Scale.FIT,
+          autoCenter: Phaser.Scale.CENTER_BOTH,
+          parent: 'game',
+          width: W,
+          height: H
+        },
         scene: { preload: preload, create: create }
       };
 
-      new Phaser.Game(config);
+      var game = new Phaser.Game(config);
+
+      function onResize(){
+        try{
+          var s = containerSize();
+          game.scale.resize(W, H);
+          game.scale.setZoom(Math.max(1, Math.floor(Math.min(s.w / W, s.h / H))));
+        }catch(e){}
+      }
+      window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
+      setTimeout(onResize, 50);
 
       function preload(){
         // generate simple textures at runtime (no assets yet)
