@@ -1152,7 +1152,7 @@ app.get('/admin/veggies', async (req, res) => {
     <div class="card" style="padding:0">
       ${veggies.map(v => {
         return `
-          <div role="button" tabindex="0" class="secondary vegCard" data-veg-id="${escapeHtml(v.id)}" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px">
+          <div role="button" tabindex="0" class="secondary vegCard" data-veg-id="${escapeHtml(v.id)}" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px;touch-action:manipulation">
             <div class="actions" style="justify-content:space-between;align-items:center">
               <div>
                 <div><b>${escapeHtml(v.name)}</b> <span class="muted">${escapeHtml(v.unit||'')}</span></div>
@@ -1282,15 +1282,13 @@ app.get('/admin/veggies', async (req, res) => {
           openDlg(dlgD);
         };
 
-        // bind cards
+        // bind cards (use Pointer Events to avoid iOS ghost-clicks)
         document.querySelectorAll('.vegCard[data-veg-id]').forEach(function(el){
-          function go(e){
-            if(e){ if(e.preventDefault) e.preventDefault(); if(e.stopPropagation) e.stopPropagation(); }
+          el.addEventListener('pointerup', function(e){
+            if(e){ e.preventDefault(); e.stopPropagation(); }
             var id = el.getAttribute('data-veg-id');
             window.openVegDetail(id);
-          }
-          el.addEventListener('click', go, {passive:false});
-          el.addEventListener('touchend', go, {passive:false});
+          });
         });
 
         if(btnClose) btnClose.addEventListener('click', function(){ closeDlg(dlgD); });
