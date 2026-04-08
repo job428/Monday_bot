@@ -627,7 +627,7 @@ app.get('/game', async (req, res) => {
     #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.0;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
 
     #stage{position:absolute;left:0;right:0;top:var(--vpad);bottom:var(--vpad);overflow:hidden;background:#1a2533;outline:2px solid rgba(255,0,0,0.35)}
-    #stage canvas{touch-action:none;display:block;position:absolute;left:0;top:0}
+    #stage canvas{touch-action:none;display:block;position:absolute;left:0;top:0;outline:2px solid rgba(0,255,120,0.65);background:#222}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
@@ -643,13 +643,23 @@ app.get('/game', async (req, res) => {
         <a href="/admin?token=${escapeHtml(ADMIN_TOKEN)}">กลับหน้าแอดมิน</a>
       </div>
     </div>
-    <div id="game"><div id="stage"></div></div>
+    <div id="game"><div id="stage"></div><div id="err" style="position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:16px;color:#ffd27a;font-family:monospace;background:rgba(0,0,0,0.55);z-index:50"></div></div>
   </div>
 
   <script>
     (function(){
       var br = document.getElementById('btnRefresh');
       if (br) br.addEventListener('click', function(){ location.reload(); });
+
+      function showErr(msg){
+        var el = document.getElementById('err');
+        if(!el) return;
+        el.style.display='flex';
+        el.textContent=String(msg||'error');
+      }
+      window.addEventListener('error', function(e){ showErr('JS error: '+(e && e.message ? e.message : e)); });
+      window.addEventListener('unhandledrejection', function(e){ showErr('Promise error: '+(e && e.reason ? e.reason : e)); });
+
 
       // Internal portrait resolution (pixel vibe)
       var W = 180, H = 320;
@@ -662,6 +672,11 @@ app.get('/game', async (req, res) => {
 
       var baseZoom = 1.0;   // auto-cover zoom
       var userZoom = 1.0;   // pinch multiplier
+
+      if (!window.Phaser) {
+        showErr('Phaser โหลดไม่ขึ้น (CDN blocked?)');
+        return;
+      }
 
       var config = {
         type: Phaser.CANVAS,
