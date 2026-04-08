@@ -626,7 +626,7 @@ app.get('/game', async (req, res) => {
     #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 3px rgba(255,255,255,0.14), inset 0 0 60px rgba(0,0,0,0.28)}
     #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.18;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
 
-    #game canvas{touch-action:none;position:absolute;left:0;top:0;width:100% !important;height:100% !important}
+    #game canvas{touch-action:none;display:block;position:absolute;left:0;top:0}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
