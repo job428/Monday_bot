@@ -623,10 +623,10 @@ app.get('/game', async (req, res) => {
 
     /* game bezel */
     #game{--vpad:0px;position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:calc(10px + env(safe-area-inset-bottom));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
-    #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 3px rgba(255,255,255,0.14), inset 0 0 60px rgba(0,0,0,0.28)}
-    #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.18;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
+    #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 3px rgba(255,255,255,0.14), inset 0 0 0 rgba(0,0,0,0.0)}
+    #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.0;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
 
-    #stage{position:absolute;left:0;right:0;top:var(--vpad);bottom:var(--vpad);overflow:hidden}
+    #stage{position:absolute;left:0;right:0;top:var(--vpad);bottom:var(--vpad);overflow:hidden;background:#1a2533;outline:2px solid rgba(255,0,0,0.35)}
     #stage canvas{touch-action:none;display:block;position:absolute;left:0;top:0}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
