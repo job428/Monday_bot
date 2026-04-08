@@ -707,7 +707,7 @@ app.get('/game', async (req, res) => {
         }catch(e){}
       }
 
-      function onResize()function onResize(){
+      function onResize(){
         try{
           var s = containerSize();
           if (game.scale && game.scale.setParentSize) game.scale.setParentSize(s.w, s.h);
