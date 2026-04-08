@@ -727,7 +727,6 @@ app.get('/game', async (req, res) => {
           c.dataset.baseTransform = t;
         }catch(e){}
       }
-      }
 
       function applyZoom(){
         try{
