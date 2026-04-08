@@ -683,6 +683,16 @@ app.get('/game', async (req, res) => {
           if (!el) return;
           el.style.setProperty('--vpad', Math.max(0, Math.floor(px)) + 'px');
         }catch(e){}
+
+      function setYScale(k){
+        try{
+          var c = game && game.canvas;
+          if (!c) return;
+          k = Math.max(0.05, Math.min(1.0, Number(k)||1));
+          c.style.transformOrigin = '50% 50%';
+          c.style.transform = (k===1 ? '' : ('scaleY(' + k.toFixed(4) + ')'));
+        }catch(e){}
+      }
       }
 
       function applyZoom(){
@@ -697,9 +707,11 @@ app.get('/game', async (req, res) => {
             // Max vpad leaves at least ~35% height
             var maxV = Math.max(0, Math.floor((s.h * 0.65) / 2));
             setVPad(t * maxV);
+            setYScale(userZoom);
             game.scale.setZoom(baseZoom);
           } else {
             setVPad(0);
+            setYScale(1);
             var z = baseZoom * userZoom;
             z = Math.max(0.05, Math.min(24, Math.round(z * 20) / 20));
             game.scale.setZoom(z);
