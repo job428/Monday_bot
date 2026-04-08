@@ -698,6 +698,7 @@ app.get('/game', async (req, res) => {
           if (!el) return;
           el.style.setProperty('--vpad', Math.max(0, Math.floor(px)) + 'px');
         }catch(e){}
+      }
 
       function setYScale(k){
         try{
@@ -722,8 +723,6 @@ app.get('/game', async (req, res) => {
           if (!c) return;
           c.dataset.baseTransform = c.style.transform || '';
         }catch(e){}
-      }
-      }
       }
 
       function applyZoom(){
