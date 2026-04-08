@@ -622,11 +622,12 @@ app.get('/game', async (req, res) => {
     .hint{color:#b7c0cc;font-size:12px}
 
     /* game bezel */
-    #game{position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:calc(10px + env(safe-area-inset-bottom));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
+    #game{--vpad:0px;position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:calc(10px + env(safe-area-inset-bottom));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
     #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 3px rgba(255,255,255,0.14), inset 0 0 60px rgba(0,0,0,0.28)}
     #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.18;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
 
-    #game canvas{touch-action:none;display:block;position:absolute;left:0;top:0}
+    #stage{position:absolute;left:0;right:0;top:var(--vpad);bottom:var(--vpad);overflow:hidden}
+    #stage canvas{touch-action:none;display:block;position:absolute;left:0;top:0}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
@@ -642,7 +643,7 @@ app.get('/game', async (req, res) => {
         <a href="/admin?token=${escapeHtml(ADMIN_TOKEN)}">กลับหน้าแอดมิน</a>
       </div>
     </div>
-    <div id="game"></div>
+    <div id="game"><div id="stage"></div></div>
   </div>
 
   <script>
@@ -654,7 +655,7 @@ app.get('/game', async (req, res) => {
       var W = 180, H = 320;
 
       function containerSize(){
-        var el = document.getElementById('game');
+        var el = document.getElementById('stage');
         var r = el.getBoundingClientRect();
         return { w: Math.max(1, Math.floor(r.width)), h: Math.max(1, Math.floor(r.height)) };
       }
@@ -664,33 +665,53 @@ app.get('/game', async (req, res) => {
 
       var config = {
         type: Phaser.CANVAS,
-        parent: 'game',
+        parent: 'stage',
         backgroundColor: '#0b0f14',
         width: W,
         height: H,
         pixelArt: true,
         input: { activePointers: 3, touch: { capture: true } },
-        scale: { mode: Phaser.Scale.NONE, autoCenter: Phaser.Scale.CENTER_BOTH, parent: 'game', width: W, height: H },
+        scale: { mode: Phaser.Scale.NONE, autoCenter: Phaser.Scale.CENTER_BOTH, parent: 'stage', width: W, height: H },
         scene: { preload: preload, create: create }
       };
 
       var game = new Phaser.Game(config);
 
-      function applyZoom(){
+      function setVPad(px){
         try{
-          var z = baseZoom * userZoom;
-          // many levels
-          z = Math.max(0.05, Math.min(24, Math.round(z * 20) / 20));
-          game.scale.setZoom(z);
+          var el = document.getElementById('game');
+          if (!el) return;
+          el.style.setProperty('--vpad', Math.max(0, Math.floor(px)) + 'px');
         }catch(e){}
       }
 
-      function onResize(){
+      function applyZoom(){
+        try{
+          var s = containerSize();
+          // baseZoom fills the available STAGE area
+          baseZoom = Math.max(s.w / W, s.h / H);
+
+          // Lock left/right edges when zooming OUT (<1): shrink only top/bottom via vpad (letterbox)
+          if (userZoom < 1) {
+            var t = (1 - userZoom); // 0..1
+            // Max vpad leaves at least ~35% height
+            var maxV = Math.max(0, Math.floor((s.h * 0.65) / 2));
+            setVPad(t * maxV);
+            game.scale.setZoom(baseZoom);
+          } else {
+            setVPad(0);
+            var z = baseZoom * userZoom;
+            z = Math.max(0.05, Math.min(24, Math.round(z * 20) / 20));
+            game.scale.setZoom(z);
+          }
+        }catch(e){}
+      }
+
+      function onResize()function onResize(){
         try{
           var s = containerSize();
           if (game.scale && game.scale.setParentSize) game.scale.setParentSize(s.w, s.h);
           game.scale.resize(W, H);
-          baseZoom = Math.max(s.w / W, s.h / H);
           applyZoom();
         }catch(e){}
       }
