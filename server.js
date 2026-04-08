@@ -734,6 +734,7 @@ app.get('/game', async (req, res) => {
           // reset vertical squash unless zoom-out mode sets it
           try{ setYScale(1); }catch(_){}
           var s = containerSize();
+          if (game.scale && game.scale.setParentSize) game.scale.setParentSize(s.w, s.h);
           // baseZoom fills the available STAGE area
           baseZoom = Math.max(s.w / W, s.h / H);
 
@@ -743,6 +744,10 @@ app.get('/game', async (req, res) => {
             // Max vpad leaves at least ~35% height
             var maxV = Math.max(0, Math.floor((s.h * 0.65) / 2));
             setVPad(t * maxV);
+            // stage height changed -> recompute to keep it centered
+            s = containerSize();
+            if (game.scale && game.scale.setParentSize) game.scale.setParentSize(s.w, s.h);
+            baseZoom = Math.max(s.w / W, s.h / H);
             game.scale.setZoom(baseZoom);
             syncBaseTransform();
             setYScale(userZoom);
