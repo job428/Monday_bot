@@ -1706,7 +1706,7 @@ app.get('/admin/plot-map', async (req, res) => {
     <div class="actions" style="justify-content:space-between;align-items:center">
       <div>
         <h2 style="margin:0">ออกแบบแผนที่แปลง</h2>
-        <div class="muted">ลากกล่องเพื่อย้ายตำแหน่ง · ดึงมุมขวาล่างเพื่อปรับขนาด · ระบบจะบันทึกอัตโนมัติ</div>
+        <div class="muted">ลากกล่องเพื่อย้ายตำแหน่ง · ดึงมุมขวาล่างเพื่อปรับขนาด · กดปุ่มบันทึกเมื่อจัดเสร็จ</div>
       </div>
       <a class="pill" href="/admin/plantings?token=${t}" style="text-decoration:none">ไปหน้า การปลูก</a>
     </div>
@@ -1723,7 +1723,10 @@ app.get('/admin/plot-map', async (req, res) => {
         <div id="farmMap" style="position:absolute;left:0;top:0;width:1000px;height:620px;transform-origin:0 0;border-radius:18px;overflow:hidden;background:linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(135deg,#d9f99d,#86efac);background-size:40px 40px,40px 40px,100% 100%;touch-action:none"></div>
       </div>
     </div>
-    <div class="muted" id="saveState" style="margin-top:8px">พร้อมแก้ไข</div>
+    <div class="actions" style="justify-content:space-between;margin-top:10px;gap:8px">
+      <div class="muted" id="saveState">พร้อมแก้ไข</div>
+      <button type="button" id="btnSaveMap">บันทึกตำแหน่งแผนที่</button>
+    </div>
   </div>
 
   <div class="card">
@@ -1755,6 +1758,8 @@ app.get('/admin/plot-map', async (req, res) => {
       var stage=document.getElementById('farmStage');
       var map=document.getElementById('farmMap');
       var saveState=document.getElementById('saveState');
+      var saveBtn=document.getElementById('btnSaveMap');
+      var dirty=false;
       function esc(s){return String(s||'').replace(/[&<>\"]/g,function(ch){return ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[ch]);});}
       function clamp(n,min,max){return Math.max(min,Math.min(max,n));}
       function draw(){
@@ -1779,14 +1784,14 @@ app.get('/admin/plot-map', async (req, res) => {
           viewport.scrollLeft = cx*zoom - viewport.clientWidth/2;
           viewport.scrollTop = cy*zoom - viewport.clientHeight/2;
         }
-        if(saveState) saveState.textContent='ซูม '+Math.round(zoom*100)+'%';
+        if(saveState && !dirty) saveState.textContent='ซูม '+Math.round(zoom*100)+'%';
       }
       function fitZoom(){
         var z=viewport ? Math.min(1, Math.max(0.45, (viewport.clientWidth-12)/baseW)) : 1;
         applyZoom(z,false);
         if(viewport){ viewport.scrollLeft=0; viewport.scrollTop=0; }
       }
-      var drag=null, timer=null;
+      var drag=null;
       map.addEventListener('pointerdown',function(ev){
         var box=ev.target.closest ? ev.target.closest('.plotBox') : null; if(!box) return;
         var p=plots.find(function(x){return String(x.id)===String(box.dataset.id);}); if(!p) return;
@@ -1802,21 +1807,33 @@ app.get('/admin/plot-map', async (req, res) => {
         else { drag.p.x=clamp(drag.x+dx,0,100-drag.p.w); drag.p.y=clamp(drag.y+dy,0,100-drag.p.h); }
         draw();
       });
-      window.addEventListener('pointerup',function(){ if(!drag) return; var p=drag.p; drag=null; savePlot(p); });
-      function savePlot(p){
+      window.addEventListener('pointerup',function(){
+        if(!drag) return;
+        drag=null;
+        dirty=true;
+        if(saveState) saveState.textContent='มีการเปลี่ยนตำแหน่ง — ยังไม่ได้บันทึก';
+      });
+      function saveMap(){
+        if(!dirty) { if(saveState) saveState.textContent='ไม่มีตำแหน่งใหม่ที่ต้องบันทึก'; return; }
         if(saveState) saveState.textContent='กำลังบันทึก...';
-        clearTimeout(timer);
-        timer=setTimeout(function(){
-          fetch('/admin/plot-map/position?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:p.id,x:p.x,y:p.y,w:p.w,h:p.h})})
-            .then(function(r){ if(!r.ok) throw new Error('save failed'); return r.json(); })
-            .then(function(){ if(saveState) saveState.textContent='บันทึกแผนที่แล้ว'; })
-            .catch(function(){ if(saveState) saveState.textContent='บันทึกไม่สำเร็จ ลองรีเฟรช'; });
-        },120);
+        if(saveBtn) saveBtn.disabled=true;
+        Promise.all(plots.map(function(p){
+          return fetch('/admin/plot-map/position?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:p.id,x:p.x,y:p.y,w:p.w,h:p.h})})
+            .then(function(r){ if(!r.ok) throw new Error('บันทึกไม่สำเร็จ'); return r.json(); });
+        })).then(function(){
+          dirty=false;
+          if(saveState) saveState.textContent='บันทึกตำแหน่งแผนที่แล้ว';
+        }).catch(function(){
+          if(saveState) saveState.textContent='บันทึกไม่สำเร็จ ลองกดอีกครั้ง';
+        }).finally(function(){
+          if(saveBtn) saveBtn.disabled=false;
+        });
       }
       var zin=document.getElementById('zoomIn'), zout=document.getElementById('zoomOut'), zfit=document.getElementById('zoomFit');
       if(zin) zin.addEventListener('click',function(){ applyZoom(zoom+0.15,true); });
       if(zout) zout.addEventListener('click',function(){ applyZoom(zoom-0.15,true); });
       if(zfit) zfit.addEventListener('click',fitZoom);
+      if(saveBtn) saveBtn.addEventListener('click',saveMap);
       window.addEventListener('resize',function(){ if(window.innerWidth < 720) fitZoom(); });
       draw();
       if(window.innerWidth < 720) fitZoom(); else applyZoom(1,false);
