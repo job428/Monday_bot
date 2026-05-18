@@ -79,6 +79,18 @@ function bangkokAddDaysYmd(days) {
   return bangkokYmd(d);
 }
 
+function thaiDateBrief(ymd) {
+  let s = String(ymd || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) s = bangkokYmd(ymd);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return String(ymd || '');
+  const d = new Date(`${s}T00:00:00+07:00`);
+  const weekdays = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = String(d.getFullYear() + 543).slice(-2);
+  return `${weekdays[d.getDay()]} ${day}/${month}/${year}`;
+}
+
 function redirectAdminTo(res, path, msg) {
   const qs = new URLSearchParams({ token: ADMIN_TOKEN });
   if (msg) qs.set('msg', String(msg));
@@ -321,6 +333,33 @@ function plantingEventLabel(type) {
 
 function plantingStatusLabel(status) {
   return ({ active:'กำลังปลูก', harvested:'เก็บเกี่ยวแล้ว', canceled:'ยกเลิก' })[status] || status;
+}
+
+function timelineEventCard(e, { showCrop = false } = {}) {
+  const ymd = bangkokYmd(e.event_date);
+  const label = plantingEventLabel(e.event_type);
+  const title = e.title || (showCrop ? e.crop_name : '') || label;
+  const sub = [
+    showCrop ? e.crop_name : '',
+    showCrop ? (e.plot_names || e.plot_name || '') : '',
+    e.amount || '',
+    e.source === 'weather-api' ? 'API กรมอุตุฯ' : ''
+  ].filter(Boolean).join(' · ');
+  const color = ({ start:'#16a34a', fertilizer:'#2563eb', pesticide:'#b45309', rain:'#0284c7', note:'#64748b', harvest:'#7c3aed' })[e.event_type] || '#64748b';
+  return `<div style="display:grid;grid-template-columns:74px 1fr;gap:10px;align-items:start;border:1px solid #eee;border-radius:14px;padding:10px;margin:8px 0;background:#fff">
+    <div style="text-align:center;border-radius:12px;background:#f5f5f5;padding:8px 6px;font-weight:900;color:#111">
+      <div style="font-size:16px">${escapeHtml(thaiDateBrief(ymd).split(' ')[0] || '')}</div>
+      <div style="font-size:12px;color:#666">${escapeHtml((thaiDateBrief(ymd).split(' ')[1] || ymd))}</div>
+    </div>
+    <div>
+      <div class="actions" style="justify-content:space-between;align-items:flex-start;gap:8px">
+        <b>${escapeHtml(title)}</b>
+        <span class="pill" style="background:${color}">${escapeHtml(label)}</span>
+      </div>
+      ${sub ? `<div class="muted" style="margin-top:3px">${escapeHtml(sub)}</div>` : ''}
+      ${e.detail ? `<div style="margin-top:6px">${escapeHtml(e.detail)}</div>` : ''}
+    </div>
+  </div>`;
 }
 
 async function resolvePlotIdsFromText(p, text) {
@@ -1971,8 +2010,8 @@ app.get('/admin/plantings', async (req, res) => {
   const plotOptionsJson = JSON.stringify(plotOptions.map(v => ({ id: Number(v.id), name: v.name, area_label: v.area_label || '', x: Number(v.x_pct), y: Number(v.y_pct), w: Number(v.w_pct), h: Number(v.h_pct), color: v.color || '#16a34a' }))).replace(/</g, '\\u003c');
 
   const cards = activeRows.map(r => {
-    const start = String(r.start_date).slice(0,10);
-    const harvest = String(r.expected_harvest_date).slice(0,10);
+    const start = bangkokYmd(r.start_date);
+    const harvest = bangkokYmd(r.expected_harvest_date);
     const totalDays = Math.max(1, Number(r.harvest_days || daysBetweenYmd(start, harvest) || 1));
     const elapsed = Math.max(0, daysBetweenYmd(start, today));
     const left = daysBetweenYmd(today, harvest);
@@ -2060,12 +2099,11 @@ app.get('/admin/plantings', async (req, res) => {
   <div class="card"><h2 style="margin:0 0 8px">กำลังปลูกอยู่</h2>${cards}</div>
 
   <div class="card">
-    <h2 style="margin:0 0 8px">ไทม์ไลน์ล่าสุด</h2>
-    ${recentEvents.map(e => `<div style="border-top:1px solid #eee;padding:10px 0">
-      <div class="actions" style="justify-content:space-between"><b>${escapeHtml(plantingEventLabel(e.event_type))}: ${escapeHtml(e.title || e.crop_name)}</b><span class="muted">${escapeHtml(String(e.event_date).slice(0,10))}</span></div>
-      <div class="muted">${escapeHtml(e.crop_name)}${e.plot_name ? ' · ' + escapeHtml(e.plot_name) : ''}${e.amount ? ' · ' + escapeHtml(e.amount) : ''}${e.source === 'weather-api' ? ' · API กรมอุตุฯ' : ''}</div>
-      ${e.detail ? `<div>${escapeHtml(e.detail)}</div>` : ''}
-    </div>`).join('') || '<div class="muted">ยังไม่มี timeline</div>'}
+    <div class="actions" style="justify-content:space-between;align-items:center">
+      <h2 style="margin:0">ไทม์ไลน์ล่าสุด</h2>
+      <span class="muted">เรียงตามวัน จ อ พ พฤ ศ ส อา</span>
+    </div>
+    ${recentEvents.map(e => timelineEventCard(e, { showCrop: true })).join('') || '<div class="muted">ยังไม่มีไทม์ไลน์</div>'}
     <div class="muted" style="margin-top:10px">หมายเหตุ: เวอร์ชันแรกยังบันทึกฝนแบบกรอกเองก่อน จุดต่อ API กรมอุตุฯ เตรียมไว้แล้วในชนิดรายการ “ฝนตก”</div>
   </div>
 
@@ -2234,8 +2272,8 @@ app.get('/admin/planting/:id', async (req, res) => {
   const [events] = await p.execute('SELECT * FROM planting_events WHERE planting_id=? ORDER BY event_date DESC, id DESC', [id]);
   const t = encodeURIComponent(ADMIN_TOKEN);
   const today = bangkokYmd(new Date());
-  const start = String(plant.start_date).slice(0,10);
-  const harvest = String(plant.expected_harvest_date).slice(0,10);
+  const start = bangkokYmd(plant.start_date);
+  const harvest = bangkokYmd(plant.expected_harvest_date);
   const elapsed = Math.max(0, daysBetweenYmd(start, today));
   const left = daysBetweenYmd(today, harvest);
   const pct = Math.max(0, Math.min(100, Math.round((elapsed / Math.max(1, Number(plant.harvest_days||1))) * 100)));
@@ -2247,7 +2285,7 @@ app.get('/admin/planting/:id', async (req, res) => {
         <h2 style="margin:0">${escapeHtml(plant.crop_name)}</h2>
         <div class="muted">${escapeHtml(plant.plot_names || plant.plot_name || 'ไม่ระบุแปลง')} · ${escapeHtml(plantingStatusLabel(plant.status))}</div>
       </div>
-      <a class="muted" href="/admin/plantings?token=${t}" style="text-decoration:none">← กลับ dashboard</a>
+      <a class="muted" href="/admin/plantings?token=${t}" style="text-decoration:none">← กลับหน้ารวม</a>
     </div>
     <div style="height:12px"></div>
     <div class="row3">
@@ -2281,12 +2319,11 @@ app.get('/admin/planting/:id', async (req, res) => {
   </div>
 
   <div class="card">
-    <h3 style="margin:0 0 8px">ไทม์ไลน์</h3>
-    ${events.map(e => `<div style="border-top:1px solid #eee;padding:12px 0">
-      <div class="actions" style="justify-content:space-between"><b>${escapeHtml(plantingEventLabel(e.event_type))}: ${escapeHtml(e.title || '')}</b><span class="muted">${escapeHtml(String(e.event_date).slice(0,10))}</span></div>
-      ${e.amount ? `<div class="muted">${escapeHtml(e.amount)}${e.source === 'weather-api' ? ' · API กรมอุตุฯ' : ''}</div>` : ''}
-      ${e.detail ? `<div>${escapeHtml(e.detail)}</div>` : ''}
-    </div>`).join('') || '<div class="muted">ยังไม่มีรายการ</div>'}
+    <div class="actions" style="justify-content:space-between;align-items:center">
+      <h3 style="margin:0">ไทม์ไลน์</h3>
+      <span class="muted">วันที่ + วันย่อไทย</span>
+    </div>
+    ${events.map(e => timelineEventCard(e)).join('') || '<div class="muted">ยังไม่มีรายการ</div>'}
   </div>`;
 
   res.type('html').send(adminLayout({ title: 'รายละเอียดการปลูก', active: 'plantings', msg: req.query.msg ? String(req.query.msg) : '', body }));
