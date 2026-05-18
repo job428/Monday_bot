@@ -275,6 +275,31 @@ async function ensurePlantingSchema() {
     INDEX idx_events_planting_date (planting_id, event_date),
     CONSTRAINT fk_planting_events_planting FOREIGN KEY (planting_id) REFERENCES plantings(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await p.query(`CREATE TABLE IF NOT EXISTS farm_plots (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(120) NOT NULL,
+    area_label VARCHAR(80) NOT NULL DEFAULT '',
+    x_pct DECIMAL(6,2) NOT NULL DEFAULT 5,
+    y_pct DECIMAL(6,2) NOT NULL DEFAULT 5,
+    w_pct DECIMAL(6,2) NOT NULL DEFAULT 20,
+    h_pct DECIMAL(6,2) NOT NULL DEFAULT 16,
+    color VARCHAR(20) NOT NULL DEFAULT '#16a34a',
+    note TEXT NULL,
+    enabled TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_farm_plots_enabled (enabled),
+    INDEX idx_farm_plots_name (name)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await p.query(`CREATE TABLE IF NOT EXISTS planting_plots (
+    planting_id BIGINT UNSIGNED NOT NULL,
+    plot_id BIGINT UNSIGNED NOT NULL,
+    PRIMARY KEY (planting_id, plot_id),
+    CONSTRAINT fk_planting_plots_planting FOREIGN KEY (planting_id) REFERENCES plantings(id) ON DELETE CASCADE,
+    CONSTRAINT fk_planting_plots_plot FOREIGN KEY (plot_id) REFERENCES farm_plots(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
   _plantingSchemaReady = true;
 }
 
@@ -312,6 +337,7 @@ function adminNav(active) {
     ${link('/admin/delivery-times', 'เวลาส่ง', 'delivery')}
     ${link('/admin/cash', 'รายรับรายจ่าย', 'cash')}
     ${link('/admin/plantings', 'การปลูก', 'plantings')}
+    ${link('/admin/plot-map', 'แผนที่แปลง', 'plot-map')}
     ${link('/admin/partners', 'พาร์ทเนอร์', 'partners')}
   </div>`;
 }
@@ -1636,6 +1662,173 @@ app.post('/admin/cash/delete', async (req, res) => {
 
 
 
+
+// --- admin farm plot map ---
+app.get('/admin/plot-map', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  await ensurePlantingSchema();
+  const p = await db();
+  const t = encodeURIComponent(ADMIN_TOKEN);
+  const [plots] = await p.execute(
+    `SELECT id,name,area_label,x_pct,y_pct,w_pct,h_pct,color,note,enabled
+     FROM farm_plots
+     WHERE enabled=1
+     ORDER BY id ASC`
+  );
+  const [activeUses] = await p.execute(
+    `SELECT pp.plot_id, GROUP_CONCAT(pl.crop_name ORDER BY pl.expected_harvest_date SEPARATOR ', ') AS crops
+     FROM planting_plots pp
+     JOIN plantings pl ON pl.id=pp.planting_id AND pl.status='active'
+     GROUP BY pp.plot_id`
+  );
+  const useMap = new Map(activeUses.map(r => [Number(r.plot_id), r.crops || '']));
+  const plotsJson = JSON.stringify(plots.map(r => ({
+    id: Number(r.id), name: r.name, area_label: r.area_label || '',
+    x: Number(r.x_pct), y: Number(r.y_pct), w: Number(r.w_pct), h: Number(r.h_pct),
+    color: r.color || '#16a34a', crops: useMap.get(Number(r.id)) || ''
+  }))).replace(/</g, '\u003c');
+
+  const plotCards = plots.map(r => {
+    const crops = useMap.get(Number(r.id));
+    return `<tr>
+      <td><b>${escapeHtml(r.name)}</b><div class="muted">${escapeHtml(r.area_label || '')}</div></td>
+      <td>${crops ? `<span class="pill" style="background:#16a34a">ใช้อยู่</span><div class="muted">${escapeHtml(crops)}</div>` : '<span class="muted">ว่าง</span>'}</td>
+      <td style="width:120px">
+        <form method="post" action="/admin/plot-map/delete?token=${t}" onsubmit="return confirm('ซ่อนแปลงนี้?')">
+          <input type="hidden" name="id" value="${escapeHtml(r.id)}" />
+          <button class="danger" type="submit">ซ่อน</button>
+        </form>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="3" class="muted">ยังไม่มีแปลง กรอกฟอร์มด้านล่างเพื่อสร้าง</td></tr>';
+
+  const body = `
+  <div class="card">
+    <div class="actions" style="justify-content:space-between;align-items:center">
+      <div>
+        <h2 style="margin:0">ออกแบบแผนที่แปลง</h2>
+        <div class="muted">ลากกล่องเพื่อย้ายตำแหน่ง · ดึงมุมขวาล่างเพื่อปรับขนาด · ระบบจะบันทึกอัตโนมัติ</div>
+      </div>
+      <a class="pill" href="/admin/plantings?token=${t}" style="text-decoration:none">ไปหน้า การปลูก</a>
+    </div>
+    <div id="farmMap" style="position:relative;height:min(70vh,620px);min-height:420px;margin-top:12px;border-radius:18px;border:1px solid #c8d2c4;overflow:hidden;background:linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(135deg,#d9f99d,#86efac);background-size:40px 40px,40px 40px,100% 100%;touch-action:none"></div>
+    <div class="muted" id="saveState" style="margin-top:8px">พร้อมแก้ไข</div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 10px">เพิ่มแปลงใหม่</h3>
+    <form method="post" action="/admin/plot-map/create?token=${t}">
+      <div class="row3">
+        <div><div class="muted">ชื่อแปลง</div><input name="name" placeholder="เช่น แปลง A1" required /></div>
+        <div><div class="muted">ขนาด/พื้นที่</div><input name="area_label" placeholder="เช่น 2 งาน / 10x20 ม." /></div>
+        <div><div class="muted">สี</div><input name="color" type="color" value="#16a34a" /></div>
+      </div>
+      <div style="height:10px"></div>
+      <div><div class="muted">หมายเหตุ</div><input name="note" placeholder="เช่น แดดเช้า, ใกล้น้ำ" /></div>
+      <div style="height:12px"></div>
+      <button type="submit">+ เพิ่มแปลง</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 8px">รายการแปลง</h3>
+    <table><thead><tr><th>แปลง</th><th>สถานะ</th><th></th></tr></thead><tbody>${plotCards}</tbody></table>
+  </div>
+
+  <script>
+    (function(){
+      var token=${JSON.stringify(ADMIN_TOKEN)};
+      var plots=${plotsJson};
+      var map=document.getElementById('farmMap');
+      var saveState=document.getElementById('saveState');
+      function esc(s){return String(s||'').replace(/[&<>\"]/g,function(ch){return ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[ch]);});}
+      function clamp(n,min,max){return Math.max(min,Math.min(max,n));}
+      function draw(){
+        map.innerHTML='';
+        plots.forEach(function(p){
+          var el=document.createElement('div');
+          el.className='plotBox'; el.dataset.id=p.id;
+          el.style.cssText='position:absolute;left:'+p.x+'%;top:'+p.y+'%;width:'+p.w+'%;height:'+p.h+'%;background:'+p.color+'cc;border:2px solid rgba(0,0,0,.35);border-radius:12px;box-shadow:0 8px 18px rgba(0,0,0,.16);color:#07220f;padding:9px;font-weight:900;cursor:move;user-select:none;overflow:hidden';
+          el.innerHTML='<div>'+esc(p.name)+'</div><div style="font-weight:600;font-size:12px">'+esc(p.area_label||'')+'</div>'+(p.crops?'<div style="font-weight:700;font-size:12px;margin-top:4px;background:rgba(255,255,255,.6);border-radius:8px;padding:3px 5px">ปลูก: '+esc(p.crops)+'</div>':'')+'<div class="resize" style="position:absolute;right:0;bottom:0;width:26px;height:26px;background:rgba(0,0,0,.25);clip-path:polygon(100% 0,0 100%,100% 100%);cursor:nwse-resize"></div>';
+          map.appendChild(el);
+        });
+      }
+      var drag=null, timer=null;
+      map.addEventListener('pointerdown',function(ev){
+        var box=ev.target.closest ? ev.target.closest('.plotBox') : null; if(!box) return;
+        var p=plots.find(function(x){return String(x.id)===String(box.dataset.id);}); if(!p) return;
+        var rect=map.getBoundingClientRect();
+        drag={p:p, mode: ev.target.classList.contains('resize')?'resize':'move', sx:ev.clientX, sy:ev.clientY, x:p.x, y:p.y, w:p.w, h:p.h, rect:rect};
+        box.setPointerCapture(ev.pointerId); ev.preventDefault();
+      });
+      map.addEventListener('pointermove',function(ev){
+        if(!drag) return;
+        var dx=(ev.clientX-drag.sx)/drag.rect.width*100;
+        var dy=(ev.clientY-drag.sy)/drag.rect.height*100;
+        if(drag.mode==='resize') { drag.p.w=clamp(drag.w+dx,6,100-drag.p.x); drag.p.h=clamp(drag.h+dy,6,100-drag.p.y); }
+        else { drag.p.x=clamp(drag.x+dx,0,100-drag.p.w); drag.p.y=clamp(drag.y+dy,0,100-drag.p.h); }
+        draw();
+      });
+      window.addEventListener('pointerup',function(){ if(!drag) return; var p=drag.p; drag=null; savePlot(p); });
+      function savePlot(p){
+        if(saveState) saveState.textContent='กำลังบันทึก...';
+        clearTimeout(timer);
+        timer=setTimeout(function(){
+          fetch('/admin/plot-map/position?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:p.id,x:p.x,y:p.y,w:p.w,h:p.h})})
+            .then(function(r){ if(!r.ok) throw new Error('save failed'); return r.json(); })
+            .then(function(){ if(saveState) saveState.textContent='บันทึกแผนที่แล้ว'; })
+            .catch(function(){ if(saveState) saveState.textContent='บันทึกไม่สำเร็จ ลองรีเฟรช'; });
+        },120);
+      }
+      draw();
+    })();
+  </script>`;
+  res.type('html').send(adminLayout({ title: 'แผนที่แปลง', active: 'plot-map', msg: req.query.msg ? String(req.query.msg) : '', body }));
+});
+
+app.post('/admin/plot-map/create', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  await ensurePlantingSchema();
+  const name = String((req.body && req.body.name) || '').trim();
+  const area = String((req.body && req.body.area_label) || '').trim();
+  const color = /^#[0-9a-fA-F]{6}$/.test(String(req.body && req.body.color || '')) ? String(req.body.color) : '#16a34a';
+  const note = String((req.body && req.body.note) || '').trim();
+  if (!name) return redirectAdminTo(res, '/admin/plot-map', 'กรุณาใส่ชื่อแปลง');
+  const p = await db();
+  const [[row]] = await p.execute('SELECT COUNT(*) AS cnt FROM farm_plots WHERE enabled=1');
+  const i = Number(row.cnt || 0);
+  const x = 5 + (i % 4) * 23;
+  const y = 5 + Math.floor(i / 4) * 20;
+  await p.execute('INSERT INTO farm_plots(name,area_label,x_pct,y_pct,w_pct,h_pct,color,note,enabled) VALUES (?,?,?,?,?,?,?,?,1)', [name, area, Math.min(x, 78), Math.min(y, 78), 20, 16, color, note]);
+  return redirectAdminTo(res, '/admin/plot-map', 'เพิ่มแปลงแล้ว');
+});
+
+app.post('/admin/plot-map/position', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  await ensurePlantingSchema();
+  const id = Number((req.body && req.body.id) || 0);
+  const clean = v => Math.max(0, Math.min(100, Number(v) || 0));
+  const x = clean(req.body && req.body.x), y = clean(req.body && req.body.y);
+  const w = Math.max(4, Math.min(100, Number(req.body && req.body.w) || 10));
+  const h = Math.max(4, Math.min(100, Number(req.body && req.body.h) || 10));
+  if (!id) return res.status(400).json({ ok:false, error:'missing id' });
+  const p = await db();
+  await p.execute('UPDATE farm_plots SET x_pct=?, y_pct=?, w_pct=?, h_pct=? WHERE id=?', [x, y, w, h, id]);
+  res.json({ ok:true });
+});
+
+app.post('/admin/plot-map/delete', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  await ensurePlantingSchema();
+  const id = Number((req.body && req.body.id) || 0);
+  if (id) {
+    const p = await db();
+    await p.execute('UPDATE farm_plots SET enabled=0 WHERE id=?', [id]);
+  }
+  return redirectAdminTo(res, '/admin/plot-map', 'ซ่อนแปลงแล้ว');
+});
+
+
 // --- admin plantings ---
 app.get('/admin/plantings', async (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -1645,10 +1838,14 @@ app.get('/admin/plantings', async (req, res) => {
   const t = encodeURIComponent(ADMIN_TOKEN);
 
   const [activeRows] = await p.execute(
-    `SELECT id,crop_name,plot_name,quantity,quantity_unit,start_date,harvest_days,expected_harvest_date,expected_yield,yield_unit,status,note
-     FROM plantings
-     WHERE status='active'
-     ORDER BY expected_harvest_date ASC, id DESC`
+    `SELECT pl.id,pl.crop_name,pl.plot_name,pl.quantity,pl.quantity_unit,pl.start_date,pl.harvest_days,pl.expected_harvest_date,pl.expected_yield,pl.yield_unit,pl.status,pl.note,
+            GROUP_CONCAT(fp.name ORDER BY fp.id SEPARATOR ', ') AS plot_names
+     FROM plantings pl
+     LEFT JOIN planting_plots pp ON pp.planting_id=pl.id
+     LEFT JOIN farm_plots fp ON fp.id=pp.plot_id
+     WHERE pl.status='active'
+     GROUP BY pl.id
+     ORDER BY pl.expected_harvest_date ASC, pl.id DESC`
   );
   const [[summary]] = await p.execute(
     `SELECT COUNT(*) AS active_count, COALESCE(SUM(quantity),0) AS total_qty, COALESCE(SUM(expected_yield),0) AS total_yield
@@ -1665,6 +1862,11 @@ app.get('/admin/plantings', async (req, res) => {
     `SELECT id,name,unit FROM veggies WHERE enabled=1 ORDER BY sort_order ASC, name ASC`
   );
   const cropOptionsJson = JSON.stringify(cropOptions.map(v => ({ id: v.id, name: v.name, unit: v.unit || '' }))).replace(/</g, '\\u003c');
+  const [plotOptions] = await p.execute(
+    `SELECT id,name,area_label,x_pct,y_pct,w_pct,h_pct,color
+     FROM farm_plots WHERE enabled=1 ORDER BY id ASC`
+  );
+  const plotOptionsJson = JSON.stringify(plotOptions.map(v => ({ id: Number(v.id), name: v.name, area_label: v.area_label || '', x: Number(v.x_pct), y: Number(v.y_pct), w: Number(v.w_pct), h: Number(v.h_pct), color: v.color || '#16a34a' }))).replace(/</g, '\\u003c');
 
   const cards = activeRows.map(r => {
     const start = String(r.start_date).slice(0,10);
@@ -1678,7 +1880,7 @@ app.get('/admin/plantings', async (req, res) => {
       <div class="actions" style="justify-content:space-between;align-items:flex-start">
         <div>
           <h3 style="margin:0 0 4px">${escapeHtml(r.crop_name)}</h3>
-          <div class="muted">${escapeHtml(r.plot_name || 'ไม่ระบุแปลง')} · เริ่ม ${escapeHtml(start)}</div>
+          <div class="muted">${escapeHtml(r.plot_names || r.plot_name || 'ไม่ระบุแปลง')} · เริ่ม ${escapeHtml(start)}</div>
         </div>
         <span class="pill" style="background:${left <= 3 ? '#b00020' : '#111'}">${escapeHtml(leftText)}</span>
       </div>
@@ -1724,7 +1926,12 @@ app.get('/admin/plantings', async (req, res) => {
           </div>
           <div class="muted" id="cropPickHint">ดึงจากเมนูผัก/สินค้าเดิม</div>
         </div>
-        <div><div class="muted">แปลง/พื้นที่</div><input name="plot_name" placeholder="เช่น แปลง A" /></div>
+        <div>
+          <div class="muted">แปลง/พื้นที่</div>
+          <input id="plotNameText" name="plot_name" placeholder="เลือกจากแผนที่ หรือพิมพ์เอง" />
+          <input type="hidden" id="plotIdsInput" name="plot_ids" />
+          <div class="actions" style="margin-top:6px"><button type="button" class="secondary" id="btnPlotMapPick">เลือกหลายแปลงจากแผนที่</button></div>
+        </div>
       </div>
       <div style="height:10px"></div>
       <div class="row3">
@@ -1757,6 +1964,17 @@ app.get('/admin/plantings', async (req, res) => {
     <div class="muted" style="margin-top:10px">หมายเหตุ: เวอร์ชันแรกยังบันทึกฝนแบบ manual ก่อน จุดต่อ API กรมอุตุฯ เตรียมไว้แล้วในชนิดรายการ “ฝนตก”</div>
   </div>
 
+  <dialog id="dlgPlotPick" style="border:1px solid #ddd;border-radius:14px;max-width:860px;width:96%">
+    <div class="actions" style="justify-content:space-between;align-items:center">
+      <h3 style="margin:0">เลือกแปลงจากแผนที่</h3>
+      <button type="button" class="secondary" id="btnClosePlotPick">ปิด</button>
+    </div>
+    <div class="muted" style="margin:8px 0">แตะเลือกได้หลายแปลง แล้วกดใช้แปลงที่เลือก</div>
+    <div id="plotPickMap" style="position:relative;height:min(58vh,520px);min-height:360px;border-radius:18px;border:1px solid #c8d2c4;overflow:hidden;background:linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(135deg,#d9f99d,#86efac);background-size:40px 40px,40px 40px,100% 100%"></div>
+    <div id="plotPickText" class="muted" style="margin-top:8px">ยังไม่ได้เลือกแปลง</div>
+    <div class="actions" style="justify-content:flex-end;margin-top:10px"><a class="muted" href="/admin/plot-map?token=${t}" target="_blank" style="text-decoration:none">ออกแบบแผนที่แปลง</a><button type="button" id="btnUsePlots">ใช้แปลงที่เลือก</button></div>
+  </dialog>
+
   <dialog id="dlgCropSearch" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
     <div class="actions" style="justify-content:space-between;align-items:center">
       <h3 style="margin:0">ค้นหาจากสินค้า</h3>
@@ -1770,6 +1988,8 @@ app.get('/admin/plantings', async (req, res) => {
   <script>
     (function(){
       var crops = ${cropOptionsJson};
+      var plots = ${plotOptionsJson};
+      var selectedPlots = [];
       var d=document.getElementById('dlgNewPlanting');
       var b=document.getElementById('btnNewPlanting');
       var c=document.getElementById('btnCloseNewPlanting');
@@ -1780,10 +2000,43 @@ app.get('/admin/plantings', async (req, res) => {
       var cropList=document.getElementById('cropSearchList');
       var cropName=document.getElementById('cropNameInput');
       var qtyUnit=document.querySelector('input[name="quantity_unit"]');
+      var plotDialog=document.getElementById('dlgPlotPick');
+      var plotBtn=document.getElementById('btnPlotMapPick');
+      var plotClose=document.getElementById('btnClosePlotPick');
+      var plotMap=document.getElementById('plotPickMap');
+      var plotText=document.getElementById('plotPickText');
+      var plotNameText=document.getElementById('plotNameText');
+      var plotIdsInput=document.getElementById('plotIdsInput');
+      var usePlots=document.getElementById('btnUsePlots');
       function open(){ if(d && d.showModal) d.showModal(); else if(d) d.setAttribute('open','open'); }
       function close(){ if(d && d.close) d.close(); else if(d) d.removeAttribute('open'); }
       function openCrop(){ renderCrops(''); if(cropDialog && cropDialog.showModal) cropDialog.showModal(); else if(cropDialog) cropDialog.setAttribute('open','open'); setTimeout(function(){ if(cropSearch) cropSearch.focus(); }, 50); }
       function closeCrop(){ if(cropDialog && cropDialog.close) cropDialog.close(); else if(cropDialog) cropDialog.removeAttribute('open'); }
+      function renderPlotMap(){
+        if(!plotMap) return;
+        plotMap.innerHTML = plots.length ? '' : '<div class="muted" style="padding:14px">ยังไม่มีแปลง — ไปหน้าออกแบบแผนที่แปลงก่อน</div>';
+        plots.forEach(function(p){
+          var on=selectedPlots.indexOf(Number(p.id))>=0;
+          var el=document.createElement('button');
+          el.type='button'; el.className='plotPickBox'; el.dataset.id=p.id;
+          el.style.cssText='position:absolute;left:'+p.x+'%;top:'+p.y+'%;width:'+p.w+'%;height:'+p.h+'%;background:'+p.color+'cc;border:'+(on?'4px solid #111':'2px solid rgba(0,0,0,.35)')+';border-radius:12px;box-shadow:0 8px 18px rgba(0,0,0,.16);color:#07220f;padding:8px;font-weight:900;text-align:left;overflow:hidden';
+          el.innerHTML='<div>'+escapeHtmlClient(p.name)+'</div><div style="font-size:12px;font-weight:600">'+escapeHtmlClient(p.area_label||'')+'</div>'+(on?'<div style="position:absolute;right:6px;bottom:6px;background:#111;color:#fff;border-radius:999px;padding:2px 7px;font-size:12px">เลือก</div>':'');
+          plotMap.appendChild(el);
+        });
+        updatePlotText();
+      }
+      function updatePlotText(){
+        var names=plots.filter(function(p){return selectedPlots.indexOf(Number(p.id))>=0;}).map(function(p){return p.name;});
+        if(plotText) plotText.textContent = names.length ? ('เลือก: '+names.join(', ')) : 'ยังไม่ได้เลือกแปลง';
+      }
+      function openPlot(){ renderPlotMap(); if(plotDialog && plotDialog.showModal) plotDialog.showModal(); else if(plotDialog) plotDialog.setAttribute('open','open'); }
+      function closePlot(){ if(plotDialog && plotDialog.close) plotDialog.close(); else if(plotDialog) plotDialog.removeAttribute('open'); }
+      function applyPlots(){
+        var names=plots.filter(function(p){return selectedPlots.indexOf(Number(p.id))>=0;}).map(function(p){return p.name;});
+        if(plotNameText) plotNameText.value = names.join(', ');
+        if(plotIdsInput) plotIdsInput.value = selectedPlots.join(',');
+        closePlot();
+      }
       function renderCrops(q){
         if(!cropList) return;
         var needle=String(q||'').trim().toLowerCase();
@@ -1798,6 +2051,17 @@ app.get('/admin/plantings', async (req, res) => {
       if(c) c.addEventListener('click', close);
       if(cropBtn) cropBtn.addEventListener('click', openCrop);
       if(cropClose) cropClose.addEventListener('click', closeCrop);
+      if(plotBtn) plotBtn.addEventListener('click', openPlot);
+      if(plotClose) plotClose.addEventListener('click', closePlot);
+      if(usePlots) usePlots.addEventListener('click', applyPlots);
+      if(plotMap) plotMap.addEventListener('click', function(ev){
+        var btn=ev.target.closest ? ev.target.closest('.plotPickBox') : null;
+        if(!btn) return;
+        var id=Number(btn.dataset.id);
+        var idx=selectedPlots.indexOf(id);
+        if(idx>=0) selectedPlots.splice(idx,1); else selectedPlots.push(id);
+        renderPlotMap();
+      });
       if(cropSearch) cropSearch.addEventListener('input', function(){ renderCrops(cropSearch.value); });
       if(cropList) cropList.addEventListener('click', function(ev){
         var btn=ev.target.closest ? ev.target.closest('.cropPick') : null;
@@ -1817,6 +2081,7 @@ app.post('/admin/planting/create', async (req, res) => {
   await ensurePlantingSchema();
   const crop = String((req.body && req.body.crop_name) || '').trim();
   const plot = String((req.body && req.body.plot_name) || '').trim();
+  const plotIds = String((req.body && req.body.plot_ids) || '').split(',').map(x => Number(x)).filter(n => Number.isFinite(n) && n > 0);
   const qty = Number((req.body && req.body.quantity) || 0);
   const qtyUnit = String((req.body && req.body.quantity_unit) || 'ต้น').trim() || 'ต้น';
   const start = String((req.body && req.body.start_date) || '').slice(0,10);
@@ -1833,6 +2098,11 @@ app.post('/admin/planting/create', async (req, res) => {
      VALUES (?,?,?,?,?,?,?,?,?,'active',?)`,
     [crop, plot, Number.isFinite(qty) ? qty : 0, qtyUnit, start, harvestDays, expectedHarvest, Number.isFinite(expectedYield) ? expectedYield : 0, yieldUnit, note]
   );
+  if (plotIds.length) {
+    for (const plotId of plotIds) {
+      await p.execute('INSERT IGNORE INTO planting_plots(planting_id, plot_id) VALUES (?,?)', [ins.insertId, plotId]);
+    }
+  }
   await p.execute(
     `INSERT INTO planting_events(planting_id,event_date,event_type,title,detail,amount,source) VALUES (?,?,?,?,?,?,?)`,
     [ins.insertId, start, 'start', 'เริ่มปลูก', note, `${Number.isFinite(qty) ? qty : 0} ${qtyUnit}`, 'manual']
@@ -1845,7 +2115,14 @@ app.get('/admin/planting/:id', async (req, res) => {
   await ensurePlantingSchema();
   const id = Number(req.params.id || 0);
   const p = await db();
-  const [rows] = await p.execute('SELECT * FROM plantings WHERE id=? LIMIT 1', [id]);
+  const [rows] = await p.execute(
+    `SELECT pl.*, GROUP_CONCAT(fp.name ORDER BY fp.id SEPARATOR ', ') AS plot_names
+     FROM plantings pl
+     LEFT JOIN planting_plots pp ON pp.planting_id=pl.id
+     LEFT JOIN farm_plots fp ON fp.id=pp.plot_id
+     WHERE pl.id=?
+     GROUP BY pl.id
+     LIMIT 1`, [id]);
   const plant = rows[0];
   if (!plant) return res.status(404).type('html').send('ไม่พบรายการปลูก');
   const [events] = await p.execute('SELECT * FROM planting_events WHERE planting_id=? ORDER BY event_date DESC, id DESC', [id]);
@@ -1862,7 +2139,7 @@ app.get('/admin/planting/:id', async (req, res) => {
     <div class="actions" style="justify-content:space-between;align-items:flex-start">
       <div>
         <h2 style="margin:0">${escapeHtml(plant.crop_name)}</h2>
-        <div class="muted">${escapeHtml(plant.plot_name || 'ไม่ระบุแปลง')} · ${escapeHtml(plantingStatusLabel(plant.status))}</div>
+        <div class="muted">${escapeHtml(plant.plot_names || plant.plot_name || 'ไม่ระบุแปลง')} · ${escapeHtml(plantingStatusLabel(plant.status))}</div>
       </div>
       <a class="muted" href="/admin/plantings?token=${t}" style="text-decoration:none">← กลับ dashboard</a>
     </div>
