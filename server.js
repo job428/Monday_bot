@@ -1772,17 +1772,28 @@ app.get('/admin/plot-map', async (req, res) => {
           map.appendChild(el);
         });
       }
-      function applyZoom(next, keepCenter){
+      function applyZoom(next, keepCenter, focus){
         var old=zoom;
         zoom=clamp(next,0.45,1.8);
-        var cx=viewport ? (viewport.scrollLeft + viewport.clientWidth/2) / old : baseW/2;
-        var cy=viewport ? (viewport.scrollTop + viewport.clientHeight/2) / old : baseH/2;
+        var cx=baseW/2, cy=baseH/2;
+        if(viewport){
+          if(focus){
+            var vr=viewport.getBoundingClientRect();
+            cx=(viewport.scrollLeft + (focus.x - vr.left)) / old;
+            cy=(viewport.scrollTop + (focus.y - vr.top)) / old;
+          } else {
+            cx=(viewport.scrollLeft + viewport.clientWidth/2) / old;
+            cy=(viewport.scrollTop + viewport.clientHeight/2) / old;
+          }
+        }
         stage.style.width=(baseW*zoom)+'px';
         stage.style.height=(baseH*zoom)+'px';
         map.style.transform='scale('+zoom+')';
-        if(viewport && keepCenter){
-          viewport.scrollLeft = cx*zoom - viewport.clientWidth/2;
-          viewport.scrollTop = cy*zoom - viewport.clientHeight/2;
+        if(viewport && (keepCenter || focus)){
+          var anchorX = focus ? (focus.x - viewport.getBoundingClientRect().left) : viewport.clientWidth/2;
+          var anchorY = focus ? (focus.y - viewport.getBoundingClientRect().top) : viewport.clientHeight/2;
+          viewport.scrollLeft = cx*zoom - anchorX;
+          viewport.scrollTop = cy*zoom - anchorY;
         }
         if(saveState && !dirty) saveState.textContent='ซูม '+Math.round(zoom*100)+'%';
       }
@@ -1792,7 +1803,29 @@ app.get('/admin/plot-map', async (req, res) => {
         if(viewport){ viewport.scrollLeft=0; viewport.scrollTop=0; }
       }
       var drag=null;
+      var pinch={active:false,startDist:0,startZoom:1,cx:0,cy:0};
+      function touchDistance(t0,t1){ var dx=t0.clientX-t1.clientX, dy=t0.clientY-t1.clientY; return Math.sqrt(dx*dx+dy*dy); }
+      function touchCenter(t0,t1){ return { x:(t0.clientX+t1.clientX)/2, y:(t0.clientY+t1.clientY)/2 }; }
+      viewport.addEventListener('touchstart',function(ev){
+        if(ev.touches.length===2){
+          pinch.active=true; drag=null;
+          pinch.startDist=touchDistance(ev.touches[0],ev.touches[1]);
+          pinch.startZoom=zoom;
+          var c=touchCenter(ev.touches[0],ev.touches[1]); pinch.cx=c.x; pinch.cy=c.y;
+          ev.preventDefault();
+        }
+      },{passive:false});
+      viewport.addEventListener('touchmove',function(ev){
+        if(pinch.active && ev.touches.length===2){
+          var dist=touchDistance(ev.touches[0],ev.touches[1]);
+          var c=touchCenter(ev.touches[0],ev.touches[1]);
+          applyZoom(pinch.startZoom*(dist/Math.max(1,pinch.startDist)), true, c);
+          ev.preventDefault();
+        }
+      },{passive:false});
+      viewport.addEventListener('touchend',function(ev){ if(ev.touches.length<2) pinch.active=false; },{passive:false});
       map.addEventListener('pointerdown',function(ev){
+        if(pinch.active) return;
         var box=ev.target.closest ? ev.target.closest('.plotBox') : null; if(!box) return;
         var p=plots.find(function(x){return String(x.id)===String(box.dataset.id);}); if(!p) return;
         var rect=map.getBoundingClientRect();
@@ -1800,7 +1833,7 @@ app.get('/admin/plot-map', async (req, res) => {
         box.setPointerCapture(ev.pointerId); ev.preventDefault();
       });
       map.addEventListener('pointermove',function(ev){
-        if(!drag) return;
+        if(pinch.active || !drag) return;
         var dx=(ev.clientX-drag.sx)/drag.rect.width*100;
         var dy=(ev.clientY-drag.sy)/drag.rect.height*100;
         if(drag.mode==='resize') { drag.p.w=clamp(drag.w+dx,6,100-drag.p.x); drag.p.h=clamp(drag.h+dy,6,100-drag.p.y); }
