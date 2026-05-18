@@ -323,6 +323,17 @@ function plantingStatusLabel(status) {
   return ({ active:'กำลังปลูก', harvested:'เก็บเกี่ยวแล้ว', canceled:'ยกเลิก' })[status] || status;
 }
 
+async function resolvePlotIdsFromText(p, text) {
+  const names = String(text || '').split(',').map(x => x.trim()).filter(Boolean);
+  if (!names.length) return [];
+  const out = [];
+  for (const name of names) {
+    const [rows] = await p.execute('SELECT id FROM farm_plots WHERE enabled=1 AND name=? LIMIT 1', [name]);
+    if (rows[0]) out.push(Number(rows[0].id));
+  }
+  return out;
+}
+
 // --- layouts ---
 function adminNav(active) {
   const t = encodeURIComponent(ADMIN_TOKEN);
@@ -1675,10 +1686,12 @@ app.get('/admin/plot-map', async (req, res) => {
      ORDER BY id ASC`
   );
   const [activeUses] = await p.execute(
-    `SELECT pp.plot_id, GROUP_CONCAT(pl.crop_name ORDER BY pl.expected_harvest_date SEPARATOR ', ') AS crops
-     FROM planting_plots pp
-     JOIN plantings pl ON pl.id=pp.planting_id AND pl.status='active'
-     GROUP BY pp.plot_id`
+    `SELECT fp.id AS plot_id, GROUP_CONCAT(DISTINCT pl.crop_name ORDER BY pl.expected_harvest_date SEPARATOR ', ') AS crops
+     FROM farm_plots fp
+     JOIN plantings pl ON pl.status='active'
+     LEFT JOIN planting_plots pp ON pp.planting_id=pl.id AND pp.plot_id=fp.id
+     WHERE fp.enabled=1 AND (pp.plot_id IS NOT NULL OR FIND_IN_SET(fp.name, REPLACE(pl.plot_name, ' ', '')) > 0)
+     GROUP BY fp.id`
   );
   const useMap = new Map(activeUses.map(r => [Number(r.plot_id), r.crops || '']));
   const plotsJson = JSON.stringify(plots.map(r => ({
@@ -2173,7 +2186,7 @@ app.post('/admin/planting/create', async (req, res) => {
   await ensurePlantingSchema();
   const crop = String((req.body && req.body.crop_name) || '').trim();
   const plot = String((req.body && req.body.plot_name) || '').trim();
-  const plotIds = String((req.body && req.body.plot_ids) || '').split(',').map(x => Number(x)).filter(n => Number.isFinite(n) && n > 0);
+  let plotIds = String((req.body && req.body.plot_ids) || '').split(',').map(x => Number(x)).filter(n => Number.isFinite(n) && n > 0);
   const qty = Number((req.body && req.body.quantity) || 0);
   const qtyUnit = String((req.body && req.body.quantity_unit) || 'ต้น').trim() || 'ต้น';
   const start = String((req.body && req.body.start_date) || '').slice(0,10);
@@ -2185,6 +2198,7 @@ app.post('/admin/planting/create', async (req, res) => {
   if (!start) return redirectAdminTo(res, '/admin/plantings', 'กรุณาระบุวันที่เริ่มปลูก');
   const expectedHarvest = addDaysYmd(start, harvestDays);
   const p = await db();
+  if (!plotIds.length && plot) plotIds = await resolvePlotIdsFromText(p, plot);
   const [ins] = await p.execute(
     `INSERT INTO plantings(crop_name,plot_name,quantity,quantity_unit,start_date,harvest_days,expected_harvest_date,expected_yield,yield_unit,status,note)
      VALUES (?,?,?,?,?,?,?,?,?,'active',?)`,
