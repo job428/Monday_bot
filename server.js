@@ -18,11 +18,13 @@ const express = require('express');
 const helmet = require('helmet');
 const mysql = require('mysql2/promise');
 const crypto = require('crypto');
+const path = require('path');
 
 const app = express();
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '400kb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use('/vendor', express.static(path.join(__dirname, 'public/vendor')));
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
@@ -235,6 +237,67 @@ async function getOrders({ limit = 500, status = null, deliveryDate = null } = {
   return hydrateOrdersWithItems(p, orders);
 }
 
+
+// --- planting data (simple v1) ---
+let _plantingSchemaReady = false;
+async function ensurePlantingSchema() {
+  if (_plantingSchemaReady) return;
+  const p = await db();
+  await p.query(`CREATE TABLE IF NOT EXISTS plantings (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    crop_name VARCHAR(120) NOT NULL,
+    plot_name VARCHAR(120) NOT NULL DEFAULT '',
+    quantity DECIMAL(12,2) NOT NULL DEFAULT 0,
+    quantity_unit VARCHAR(30) NOT NULL DEFAULT 'ต้น',
+    start_date DATE NOT NULL,
+    harvest_days INT NOT NULL DEFAULT 30,
+    expected_harvest_date DATE NOT NULL,
+    expected_yield DECIMAL(12,2) NOT NULL DEFAULT 0,
+    yield_unit VARCHAR(30) NOT NULL DEFAULT 'กก.',
+    status ENUM('active','harvested','canceled') NOT NULL DEFAULT 'active',
+    note TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_plantings_status (status),
+    INDEX idx_plantings_harvest (expected_harvest_date)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await p.query(`CREATE TABLE IF NOT EXISTS planting_events (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    planting_id BIGINT UNSIGNED NOT NULL,
+    event_date DATE NOT NULL,
+    event_type ENUM('start','fertilizer','pesticide','rain','note','harvest') NOT NULL DEFAULT 'note',
+    title VARCHAR(160) NOT NULL DEFAULT '',
+    detail TEXT NULL,
+    amount VARCHAR(80) NOT NULL DEFAULT '',
+    source VARCHAR(80) NOT NULL DEFAULT 'manual',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_events_planting_date (planting_id, event_date),
+    CONSTRAINT fk_planting_events_planting FOREIGN KEY (planting_id) REFERENCES plantings(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  _plantingSchemaReady = true;
+}
+
+function addDaysYmd(ymd, days) {
+  const d = new Date(`${String(ymd).slice(0,10)}T00:00:00+07:00`);
+  d.setDate(d.getDate() + (Number(days) || 0));
+  return bangkokYmd(d);
+}
+
+function daysBetweenYmd(a, b) {
+  const da = new Date(`${String(a).slice(0,10)}T00:00:00+07:00`);
+  const db = new Date(`${String(b).slice(0,10)}T00:00:00+07:00`);
+  return Math.round((db.getTime() - da.getTime()) / 86400000);
+}
+
+function plantingEventLabel(type) {
+  return ({ start:'เริ่มปลูก', fertilizer:'ใส่ปุ๋ย', pesticide:'ใส่ยา', rain:'ฝนตก', note:'บันทึก', harvest:'เก็บเกี่ยว' })[type] || 'บันทึก';
+}
+
+function plantingStatusLabel(status) {
+  return ({ active:'กำลังปลูก', harvested:'เก็บเกี่ยวแล้ว', canceled:'ยกเลิก' })[status] || status;
+}
+
 // --- layouts ---
 function adminNav(active) {
   const t = encodeURIComponent(ADMIN_TOKEN);
@@ -248,8 +311,8 @@ function adminNav(active) {
     ${link('/admin/veggies', 'ผัก', 'veggies')}
     ${link('/admin/delivery-times', 'เวลาส่ง', 'delivery')}
     ${link('/admin/cash', 'รายรับรายจ่าย', 'cash')}
+    ${link('/admin/plantings', 'การปลูก', 'plantings')}
     ${link('/admin/partners', 'พาร์ทเนอร์', 'partners')}
-    <a class="nav" href="/game" target="_blank" rel="noopener">เกม</a>
   </div>`;
 }
 
@@ -615,312 +678,171 @@ app.get('/game', async (req, res) => {
     html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
     body{position:fixed;inset:0}
     #wrap{position:fixed;inset:0}
-
     .top{position:fixed;left:0;right:0;top:0;z-index:10;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px;padding-top:calc(10px + env(safe-area-inset-top));background:linear-gradient(rgba(11,15,20,0.88) 60%, rgba(11,15,20,0));pointer-events:none}
     .top *{pointer-events:auto}
     a{color:#9ae6b4;text-decoration:none}
     .hint{color:#b7c0cc;font-size:12px}
-
-    /* game bezel */
-    #game{--vpad:0px;position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:calc(10px + env(safe-area-inset-bottom));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
-    #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 3px rgba(255,255,255,0.14), inset 0 0 0 rgba(0,0,0,0.0)}
+    #game{position:fixed;left:calc(10px + env(safe-area-inset-left));right:calc(10px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:calc(10px + env(safe-area-inset-bottom));overflow:hidden;background:#111;touch-action:none;border-radius:18px;border:1px solid rgba(255,255,255,0.14);box-shadow:0 10px 30px rgba(0,0,0,0.35)}
+    #game::before{content:'';position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 3px rgba(255,255,255,0.14)}
     #game::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:0.18;background:repeating-linear-gradient(to bottom, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, rgba(0,0,0,0) 3px, rgba(0,0,0,0) 6px)}
-
-    #stage{position:absolute;left:0;right:0;top:var(--vpad);bottom:var(--vpad);overflow:hidden}
-    #stage canvas{touch-action:none;display:block;position:absolute;left:0;top:0}
+    #stage{position:absolute;inset:0;overflow:hidden;display:flex;align-items:center;justify-content:center}
+    #stage canvas{touch-action:none;display:block;position:relative;margin:auto}
+    #debugHud{position:absolute;left:10px;top:10px;z-index:40;background:rgba(0,0,0,.65);color:#9ef7b8;font:12px/1.35 monospace;padding:8px 10px;border-radius:10px;white-space:pre-wrap;pointer-events:none}
+    #err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:16px;color:#ffd27a;font-family:monospace;background:rgba(0,0,0,0.55);z-index:50}
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+  <script src="/vendor/phaser.min.js"></script>
 </head>
 <body>
   <div id="wrap">
     <div class="top">
       <div>
         <div style="font-weight:900;font-size:18px">ร้านขายผัก (ห้องเปล่า ๆ)</div>
-        <div class="hint">Prototype: แนวตั้งเต็มจอ · ลากซ้าย/ขวาเพื่อเลื่อนมุมมอง · ถ่าง/หุบเพื่อซูม</div>
+        <div class="hint">Prototype: แนวตั้งเต็มจอ · ลากเพื่อเลื่อนมุมมอง · ถ่าง/หุบเพื่อซูม</div>
       </div>
       <div class="hint" style="display:flex;gap:10px;align-items:center">
         <button id="btnRefresh" type="button" style="padding:8px 10px;border-radius:10px;border:1px solid #2a3a52;background:#111;color:#fff;font-weight:800">รีเฟรช</button>
         <a href="/admin?token=${escapeHtml(ADMIN_TOKEN)}">กลับหน้าแอดมิน</a>
       </div>
     </div>
-    <div id="game"><div id="stage"></div><div id="err" style="position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:16px;color:#ffd27a;font-family:monospace;background:rgba(0,0,0,0.55);z-index:50"></div></div>
+    <div id="game"><div id="stage"></div><div id="debugHud">loading...</div><div id="err"></div></div>
   </div>
-
-  <script>
-    (function(){
-      var br = document.getElementById('btnRefresh');
-      if (br) br.addEventListener('click', function(){ location.reload(); });
-
-      function showErr(msg){
-        var el = document.getElementById('err');
-        if(!el) return;
-        el.style.display='flex';
-        el.textContent=String(msg||'error');
-      }
-      window.addEventListener('error', function(e){ showErr('JS error: '+(e && e.message ? e.message : e)); });
-      window.addEventListener('unhandledrejection', function(e){ showErr('Promise error: '+(e && e.reason ? e.reason : e)); });
+  <script src="/vendor/veg-game.js"></script>
+</body>
+</html>`);
+});
 
 
-      // Internal portrait resolution (pixel vibe)
-      var W = 180, H = 320;
-
-      function containerSize(){
-        var el = document.getElementById('stage');
-        var r = el.getBoundingClientRect();
-        return { w: Math.max(1, Math.floor(r.width)), h: Math.max(1, Math.floor(r.height)) };
-      }
-
-      var baseZoom = 1.0;   // auto-cover zoom
-      var userZoom = 1.0;   // pinch multiplier
-
-      if (!window.Phaser) {
-        showErr('Phaser โหลดไม่ขึ้น (CDN blocked?)');
-        return;
-      }
-
-      var config = {
-        type: Phaser.CANVAS,
-        parent: 'stage',
-        backgroundColor: '#0b0f14',
-        width: W,
-        height: H,
-        pixelArt: true,
-        input: { activePointers: 3, touch: { capture: true } },
-        scale: { mode: Phaser.Scale.NONE, autoCenter: Phaser.Scale.CENTER_BOTH, parent: 'stage', width: W, height: H },
-        scene: { preload: preload, create: create }
-      };
-
-      var game = new Phaser.Game(config);
-
-      function setVPad(px){
-        try{
-          var el = document.getElementById('game');
-          if (!el) return;
-          el.style.setProperty('--vpad', Math.max(0, Math.floor(px)) + 'px');
-        }catch(e){}
-      }
-
-      function setYScale(k){
-        try{
-          var c = game && game.canvas;
-          if (!c) return;
-          k = Math.max(0.05, Math.min(1.0, Number(k)||1));
-
-          // Phaser scale manager writes its own transform (translate + scale).
-          // Preserve it and append a scaleY for letterbox zoom-out.
-          if (!c.dataset.baseTransform) {
-            c.dataset.baseTransform = c.style.transform || '';
-          }
-          var base = c.dataset.baseTransform || '';
-          c.style.transformOrigin = '50% 50%';
-          c.style.transform = (k===1 ? base : (base + ' scaleY(' + k.toFixed(4) + ')'));
-        }catch(e){}
-      }
-
-      function syncBaseTransform(){
-        try{
-          var c = game && game.canvas;
-          if (!c) return;
-          var t = c.style.transform || '';
-          // Strip any previous scaleY we appended
-          t = t.replace(/scaleY\([^\)]+\)/g, '').trim();
-          c.dataset.baseTransform = t;
-        }catch(e){}
-      }
-
-      function applyZoom(){
-        try{
-          // reset vertical squash unless zoom-out mode sets it
-          try{ setYScale(1); }catch(_){}
-          var s = containerSize();
-          if (game.scale && game.scale.setParentSize) game.scale.setParentSize(s.w, s.h);
-          // baseZoom fills the available STAGE area
-          baseZoom = Math.max(s.w / W, s.h / H);
-
-          // Lock left/right edges when zooming OUT (<1): shrink only top/bottom via vpad (letterbox)
-          if (userZoom < 1) {
-            var t = (1 - userZoom); // 0..1
-            // Max vpad leaves at least ~35% height
-            var maxV = Math.max(0, Math.floor((s.h * 0.65) / 2));
-            setVPad(t * maxV);
-            // stage height changed -> recompute to keep it centered
-            s = containerSize();
-            if (game.scale && game.scale.setParentSize) game.scale.setParentSize(s.w, s.h);
-            baseZoom = Math.max(s.w / W, s.h / H);
-            game.scale.setZoom(baseZoom);
-            syncBaseTransform();
-            setYScale(userZoom);
-          } else {
-            setVPad(0);
-            setYScale(1);
-            var z = baseZoom * userZoom;
-            z = Math.max(0.05, Math.min(24, Math.round(z * 20) / 20));
-            game.scale.setZoom(z);
-            syncBaseTransform();
-          }
-        }catch(e){}
-      }
-
-      function onResize(){
-        try{
-          var s = containerSize();
-          if (game.scale && game.scale.setParentSize) game.scale.setParentSize(s.w, s.h);
-          game.scale.resize(W, H);
-          applyZoom();
-        }catch(e){}
-      }
-      window.addEventListener('resize', function(){ setTimeout(onResize, 50); });
-      setTimeout(onResize, 50);
-
-      function preload(){
-        var g = this.make.graphics({x:0,y:0,add:false});
-
-        g.clear();
-        g.fillStyle(0xb07a4a,1); g.fillRect(0,0,16,16);
-        g.fillStyle(0x8e5f39,1); g.fillRect(0,0,16,2);
-        g.fillStyle(0x935f35,1); g.fillRect(0,8,16,1);
-        g.generateTexture('tile_wood',16,16);
-
-        g.clear();
-        g.fillStyle(0x587a9b,1); g.fillRect(0,0,16,16);
-        g.fillStyle(0x3f5e7d,1); g.fillRect(0,0,16,3);
-        g.fillStyle(0x2f475f,1); g.fillRect(0,15,16,1);
-        g.generateTexture('tile_wall',16,16);
-
-        g.clear();
-        g.fillStyle(0x6f4a2d,1); g.fillRect(0,4,32,12);
-        g.fillStyle(0x8a5a35,1); g.fillRect(0,0,32,6);
-        g.fillStyle(0x3a2516,1); g.fillRect(0,15,32,1);
-        g.generateTexture('counter',32,16);
-
-        g.clear();
-        g.fillStyle(0x6b7a45,1); g.fillRect(0,2,32,12);
-        g.fillStyle(0x4c5a31,1); g.fillRect(0,12,32,2);
-        g.fillStyle(0x2a321b,1); g.fillRect(0,14,32,2);
-        g.generateTexture('shelf',32,16);
-
-        g.clear();
-        g.fillStyle(0x3a2516,1); g.fillRect(0,0,16,16);
-        g.fillStyle(0x6f4a2d,1); g.fillRect(2,2,12,14);
-        g.fillStyle(0x1a120b,1); g.fillRect(7,8,2,2);
-        g.generateTexture('door',16,16);
-
-        g.clear();
-        g.fillStyle(0x1b2a1a,1); g.fillRect(0,0,64,18);
-        g.fillStyle(0x2f7d32,1); g.fillRect(1,1,62,16);
-        g.fillStyle(0x124115,1); g.fillRect(2,2,60,14);
-        g.generateTexture('sign',64,18);
-      }
-
-      function create(){
-        try{
-          var c = this.sys.game.canvas;
-          c.style.imageRendering = 'pixelated';
-          c.style.imageRendering = 'crisp-edges';
-        }catch(e){}
-
-        var tile = 16;
-        var viewCols = Math.floor(W/tile);
-        var viewRows = Math.floor(H/tile);
-        var worldCols = viewCols * 3;
-        var worldRows = viewRows;
-        var worldW = worldCols * tile;
-
-        this.cameras.main.setBounds(0, 0, worldW, worldRows*tile);
-
-        for (var y=0; y<worldRows; y++){
-          for (var x=0; x<worldCols; x++){
-            this.add.image(x*tile, y*tile, 'tile_wood').setOrigin(0,0);
-          }
-        }
-
-        for (var x=0; x<worldCols; x++) this.add.image(x*tile, 0, 'tile_wall').setOrigin(0,0);
-        for (var y=0; y<worldRows; y++){
-          this.add.image(0, y*tile, 'tile_wall').setOrigin(0,0);
-          this.add.image((worldCols-1)*tile, y*tile, 'tile_wall').setOrigin(0,0);
-        }
-
-        var doorX = Math.floor(worldCols/2)*tile;
-        var doorY = (worldRows-1)*tile;
-        this.add.image(doorX, doorY, 'door').setOrigin(0,0);
-
-        this.add.image(Math.floor(worldW/2) - tile*2, tile*12, 'counter').setOrigin(0,0);
-        this.add.image(Math.floor(worldW/2), tile*12, 'counter').setOrigin(0,0);
-
-        this.add.image(Math.floor(worldW/2) - tile*6, tile*6, 'shelf').setOrigin(0,0);
-        this.add.image(Math.floor(worldW/2) + tile*4, tile*6, 'shelf').setOrigin(0,0);
-
-        this.add.image(Math.floor(worldW/2), tile*1, 'sign').setOrigin(0.5,0);
-        this.add.text(Math.floor(worldW/2), tile*1+4, 'VEG SHOP', {fontFamily:'monospace', fontSize:'10px', color:'#d9fbe1'}).setOrigin(0.5,0);
-
-        // Horizontal pan (drag)
-        var cam = this.cameras.main;
-        var isPanning = false;
-        var startX = 0;
-        var startScrollX = 0;
-
-        function maxScrollX(){
-          return Math.max(0, worldW - W);
-        }
-        function clampScroll(){
-          cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, maxScrollX());
-        }
-
-        this.input.on('pointerdown', function(pointer){
-          var p1 = this.input.pointer1;
-          var p2 = this.input.pointer2;
-          if (p1 && p2 && p1.isDown && p2.isDown) return; // pinch
-          isPanning = true;
-          startX = pointer.x;
-          startScrollX = cam.scrollX;
-        }, this);
-        this.input.on('pointerup', function(){ isPanning = false; });
-        this.input.on('pointerout', function(){ isPanning = false; });
-        this.input.on('pointermove', function(pointer){
-          if(!isPanning) return;
-          var p1 = this.input.pointer1;
-          var p2 = this.input.pointer2;
-          if (p1 && p2 && p1.isDown && p2.isDown) return;
-          var dx = pointer.x - startX;
-          cam.scrollX = startScrollX - (dx / (game.scale.zoom || 1));
-          clampScroll();
-        }, this);
-
-        // Touch pinch zoom (robust on iOS/Chrome)
-        try{
-          var canvasEl = this.sys.game.canvas;
-          var pinch = { active:false, startDist:0, startZoom:1 };
-          function tdist(t0,t1){
-            var dx=t0.clientX-t1.clientX, dy=t0.clientY-t1.clientY;
-            return Math.sqrt(dx*dx+dy*dy);
-          }
-          canvasEl.addEventListener('touchstart', function(e){
-            if (e.touches && e.touches.length >= 2) {
-              pinch.active = true;
-              pinch.startDist = tdist(e.touches[0], e.touches[1]);
-              pinch.startZoom = userZoom;
-              isPanning = false;
-              e.preventDefault();
-            }
-          }, {passive:false});
-          canvasEl.addEventListener('touchmove', function(e){
-            if (!pinch.active) return;
-            if (e.touches && e.touches.length >= 2 && pinch.startDist > 0) {
-              var d = tdist(e.touches[0], e.touches[1]);
-              var ratio = d / pinch.startDist;
-              userZoom = Phaser.Math.Clamp(pinch.startZoom * ratio, 0.05, 12.0);
-              applyZoom();
-              clampScroll();
-              e.preventDefault();
-            }
-          }, {passive:false});
-          canvasEl.addEventListener('touchend', function(e){
-            if (!e.touches || e.touches.length < 2) { pinch.active = false; pinch.startDist = 0; }
-          }, {passive:true});
-        }catch(e){}
-      }
-    })();
-  </script>
+app.get('/world-sim', async (req, res) => {
+  res.type('html').send(`<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>World Sim</title>
+  <style>
+    :root{--bg:#081019;--panel:#101826;--panel2:#172233;--line:#26354a;--ink:#eef4ff;--muted:#92a2bb;--green:#8df0a9;--red:#ff8a8a;--yellow:#ffd369}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at top,#102033,#071019 60%);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+    .wrap{max-width:1100px;margin:0 auto;padding:14px;display:grid;gap:12px}.card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:18px;padding:14px}.top{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}.grid{display:grid;gap:12px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.stat,.king{background:#0c1522;border:1px solid var(--line);border-radius:14px;padding:12px}.kings{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.actions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.btn{border:1px solid var(--line);background:#162335;color:#fff;padding:12px 14px;border-radius:14px;font-weight:800;cursor:pointer}.btn:hover{filter:brightness(1.08)} .btn.good{background:#11482b}.btn.bad{background:#5a1f27}.btn.warn{background:#5b4410}.log{background:#09111b;border:1px solid var(--line);border-radius:14px;padding:12px;white-space:pre-wrap;line-height:1.55;max-height:45vh;overflow:auto}.muted{color:var(--muted)} .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#1c2b3f;color:#cfe2ff;font-size:12px} a{color:#9ed0ff;text-decoration:none}
+    @media (max-width:860px){.stats,.kings,.actions{grid-template-columns:1fr}.wrap{padding:10px}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card top">
+    <div>
+      <div style="font-size:28px;font-weight:900">World Sim</div>
+      <div class="muted">เกมจำลองโลกแบบตัวหนังสือ · นายคือผู้แทรกแซงโลก</div>
+    </div>
+    <div class="top" style="gap:8px">
+      <a class="pill" href="/game">เกมร้านผัก</a>
+      <a class="pill" href="/admin?token=${escapeHtml(ADMIN_TOKEN)}">กลับแอดมิน</a>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="muted">ปี</div><div id="year" style="font-size:28px;font-weight:900">1</div></div>
+    <div class="stat"><div class="muted">ประชากรโลก</div><div id="worldPop" style="font-size:28px;font-weight:900">0</div></div>
+    <div class="stat"><div class="muted">อุณหภูมิโลก</div><div id="climate" style="font-size:28px;font-weight:900">สมดุล</div></div>
+    <div class="stat"><div class="muted">สถานะโลก</div><div id="worldMood" style="font-size:28px;font-weight:900">สงบ</div></div>
+  </div>
+  <div class="card">
+    <div style="font-weight:900;margin-bottom:10px">คำสั่งของนาย</div>
+    <div class="actions">
+      <button class="btn" onclick="advance(1)">เดิน 1 ปี</button>
+      <button class="btn" onclick="advance(10)">เดิน 10 ปี</button>
+      <button class="btn good" onclick="intervene('rain')">ส่งฝน</button>
+      <button class="btn bad" onclick="intervene('drought')">ทำภัยแล้ง</button>
+      <button class="btn warn" onclick="intervene('resource')">เพิ่มทรัพยากร</button>
+      <button class="btn bad" onclick="intervene('war')">จุดสงคราม</button>
+      <button class="btn good" onclick="intervene('tech')">เร่งวิทยาการ</button>
+      <button class="btn warn" onclick="intervene('plague')">ปล่อยโรค</button>
+      <button class="btn" onclick="resetWorld()">เริ่มโลกใหม่</button>
+    </div>
+  </div>
+  <div class="kings" id="kingdoms"></div>
+  <div class="card">
+    <div style="font-weight:900;margin-bottom:10px">บันทึกเหตุการณ์โลก</div>
+    <div id="log" class="log"></div>
+  </div>
+</div>
+<script>
+const NAMES=['อาณาจักรเหนือ','สหพันธ์ทะเลทราย','จักรวรรดิป่าแก้ว'];
+let state;
+function rand(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
+function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+function makeKingdom(name){ return {name,pop:rand(80,140),food:rand(60,120),army:rand(30,90),tech:rand(10,40),happy:rand(45,75),wealth:rand(40,90),alive:true}; }
+function resetWorld(){
+  state={year:1,climate:0,worldMood:'สงบ',log:['ปี 1 · โลกถือกำเนิดขึ้นอีกครั้ง'],kingdoms:NAMES.map(makeKingdom)};
+  render();
+}
+function climateLabel(v){ if(v<=-2) return 'หนาวจัด'; if(v==-1) return 'เย็น'; if(v==0) return 'สมดุล'; if(v==1) return 'ร้อน'; return 'ร้อนจัด'; }
+function moodLabel(){
+  const alive=state.kingdoms.filter(k=>k.alive).length;
+  const wars=state.kingdoms.filter(k=>k.army>120).length;
+  if(alive<=1) return 'ล่มสลาย';
+  if(wars>=2) return 'ตึงเครียด';
+  return 'สงบ';
+}
+function log(line){ state.log.unshift(line); state.log=state.log.slice(0,120); }
+function stepOne(){
+  state.year++;
+  for(const k of state.kingdoms){
+    if(!k.alive) continue;
+    const climatePenalty = state.climate>1 ? 14 : state.climate< -1 ? 10 : 4;
+    const harvest = rand(8,24) + Math.floor(k.tech/8) - climatePenalty;
+    k.food += harvest;
+    const growth = Math.floor((k.food - k.pop*0.45)/12) + rand(-2,4);
+    k.pop = Math.max(0, k.pop + growth);
+    k.food -= Math.max(8, Math.floor(k.pop*0.4));
+    k.wealth += rand(-4,8) + Math.floor(k.tech/10);
+    k.happy += rand(-5,5);
+    if(k.food<20){ k.happy -= 10; k.pop -= rand(3,10); log('ปี '+state.year+' · '+k.name+' เริ่มอดอยาก'); }
+    if(k.wealth<15){ k.happy -= 6; }
+    if(k.tech>70 && Math.random()<0.15){ k.wealth += 10; log('ปี '+state.year+' · '+k.name+' ค้นพบเทคโนโลยีใหม่'); }
+    if(k.happy<25 && Math.random()<0.25){ k.army -= rand(4,12); k.pop -= rand(2,8); log('ปี '+state.year+' · '+k.name+' เกิดกบฏภายใน'); }
+    if(k.food>130){ k.pop += rand(2,8); }
+    k.army += rand(-3,6) + Math.floor(k.wealth/50);
+    k.tech += rand(0,3);
+    if(k.pop<=0 || k.food<=-40){ k.alive=false; k.pop=0; log('ปี '+state.year+' · '+k.name+' ล่มสลาย'); }
+  }
+  const alive=state.kingdoms.filter(k=>k.alive);
+  if(alive.length>=2 && Math.random()<0.18){
+    const a=pick(alive), b=pick(alive.filter(x=>x!==a));
+    const powerA=a.army + rand(-20,20) + Math.floor(a.tech/2);
+    const powerB=b.army + rand(-20,20) + Math.floor(b.tech/2);
+    log('ปี '+state.year+' · '+a.name+' ปะทะ '+b.name);
+    if(powerA>=powerB){ b.pop-=rand(6,18); b.army-=rand(10,22); a.wealth+=8; log('ผล: '+a.name+' ชนะสงคราม'); }
+    else { a.pop-=rand(6,18); a.army-=rand(10,22); b.wealth+=8; log('ผล: '+b.name+' ชนะสงคราม'); }
+  }
+  if(Math.random()<0.12){ state.climate = Math.max(-2, Math.min(2, state.climate + pick([-1,1]))); log('ปี '+state.year+' · สภาพอากาศโลกเปลี่ยนเป็น '+climateLabel(state.climate)); }
+  state.worldMood=moodLabel();
+}
+function advance(n){ for(let i=0;i<n;i++) stepOne(); render(); }
+function intervene(type){
+  const alive=state.kingdoms.filter(k=>k.alive); const k=alive.length?pick(alive):null;
+  if(type==='rain'){ state.climate=Math.max(-2,state.climate-1); if(k){ k.food+=25; k.happy+=6; log('ปี '+state.year+' · นายส่งฝนให้ '+k.name); } }
+  if(type==='drought'){ state.climate=Math.min(2,state.climate+1); if(k){ k.food-=20; k.happy-=8; log('ปี '+state.year+' · นายทำภัยแล้งใส่ '+k.name); } }
+  if(type==='resource'){ if(k){ k.wealth+=20; k.food+=12; log('ปี '+state.year+' · นายมอบทรัพยากรให้ '+k.name); } }
+  if(type==='war' && alive.length>=2){ const a=pick(alive), b=pick(alive.filter(x=>x!==a)); a.army+=20; b.army+=20; a.happy-=5; b.happy-=5; log('ปี '+state.year+' · นายจุดชนวนความขัดแย้งระหว่าง '+a.name+' และ '+b.name); }
+  if(type==='tech'){ if(k){ k.tech+=12; k.wealth+=8; log('ปี '+state.year+' · นายเร่งวิทยาการให้ '+k.name); } }
+  if(type==='plague'){ if(k){ k.pop-=rand(8,20); k.happy-=12; log('ปี '+state.year+' · โรคระบาดเกิดใน '+k.name); if(k.pop<=0){k.pop=0;k.alive=false; log('ปี '+state.year+' · '+k.name+' สูญสิ้นจากโรคระบาด');}} }
+  state.worldMood=moodLabel(); render();
+}
+function render(){
+  document.getElementById('year').textContent=state.year;
+  document.getElementById('worldPop').textContent=state.kingdoms.reduce((a,b)=>a+(b.pop>0?b.pop:0),0).toLocaleString();
+  document.getElementById('climate').textContent=climateLabel(state.climate);
+  document.getElementById('worldMood').textContent=state.worldMood;
+  document.getElementById('kingdoms').innerHTML=state.kingdoms.map(function(k){
+    return '<div class="king">'
+      + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><b>' + k.name + '</b><span class="pill">' + (k.alive ? 'อยู่รอด' : 'ล่มสลาย') + '</span></div>'
+      + '<div class="muted" style="margin-top:8px">ประชากร ' + Math.max(0,k.pop) + ' · อาหาร ' + Math.round(k.food) + ' · ทหาร ' + Math.max(0,Math.round(k.army)) + '</div>'
+      + '<div class="muted">เทคโนโลยี ' + Math.round(k.tech) + ' · ความสุข ' + Math.round(k.happy) + ' · ทรัพย์ ' + Math.round(k.wealth) + '</div>'
+      + '</div>';
+  }).join('');
+  document.getElementById('log').textContent=state.log.join('\n');
+}
+resetWorld();
+</script>
 </body>
 </html>`);
 });
@@ -1268,7 +1190,7 @@ app.get('/admin/cash', async (req, res) => {
             <div class="muted">รับจาก (ลูกค้า)</div>
             <select name=\"customer_token\" id=\"new_cash_customer\">
               <option value=\"\">(พิมพ์ชื่อเอง)</option>
-              ${customers.map(c=>`<option value=\\"${escapeHtml(c.token)}\\">${escapeHtml(c.label)}</option>`).join('')}
+              ${customers.map(c=>`<option value=\\"${escapeHtml(c.token)}\\" data-label=\\"${escapeHtml(c.label)}\\">${escapeHtml(c.label)}</option>`).join('')}
             </select>
             <div style=\"height:6px\"></div>
             <input name="customer_label" id="new_cash_customer_label" placeholder="ชื่อลูกค้า" />
@@ -1281,7 +1203,7 @@ app.get('/admin/cash', async (req, res) => {
             <div class="muted">จ่ายให้ (พาร์ทเนอร์)</div>
             <select name=\"partner_id\" id=\"new_cash_partner\">
               <option value=\"\">(พิมพ์ชื่อเอง)</option>
-              ${partners.map(p=>`<option value=\\"${escapeHtml(p.id)}\\">${escapeHtml(p.name)}</option>`).join('')}
+              ${partners.map(p=>`<option value=\\"${escapeHtml(p.id)}\\" data-name=\\"${escapeHtml(p.name)}\\">${escapeHtml(p.name)}</option>`).join('')}
             </select>
             <div style=\"height:6px\"></div>
             <input name="partner_name" id="new_cash_partner_name" placeholder="ชื่อผู้รับเงิน" />
@@ -1369,11 +1291,15 @@ app.get('/admin/cash', async (req, res) => {
       ${rows.map(r => {
         const sign = r.type === 'income' ? '+' : '-';
         const color = r.type === 'income' ? '#0b6' : '#b00020';
+        const cleanPartyLabel = (val) => String(val || '')
+          .replace(/^\\+"|\\+"$/g, '')
+          .replace(/^"|"$/g, '')
+          .trim();
         return `
           <button type="button" class="secondary" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:14px 14px" onclick="openCashDetail(${escapeHtml(JSON.stringify(r.id))})">
             <div class="actions" style="justify-content:space-between;align-items:flex-start">
               <div>
-                <div><b>${escapeHtml(r.type==='income' ? ('รับจาก: '+(r.customer_label||'')) : ('จ่ายให้: '+(r.partner_name||'')))}</b></div>
+                <div><b>${escapeHtml(r.type==='income' ? ('รับจาก: '+cleanPartyLabel(r.customer_label)) : ('จ่ายให้: '+cleanPartyLabel(r.partner_name)))}</b></div>
                 <div class="muted">${escapeHtml(String(r.entry_date).slice(0,10))}${r.note ? ' · ' + escapeHtml(r.note) : ''}</div>
               </div>
               <div style="font-weight:900;color:${color}">${sign}${Number(r.amount||0).toLocaleString('th-TH')}</div>
@@ -1452,8 +1378,45 @@ app.get('/admin/cash', async (req, res) => {
           if (inP) { inP.required = !isIncome; inP.disabled = isIncome; if(isIncome) inP.value=''; }
         }
 
-        if (btnNewIncome) btnNewIncome.addEventListener('click', function(){ setNewType('income'); openDlg(dlgNew); });
-        if (btnNewExpense) btnNewExpense.addEventListener('click', function(){ setNewType('expense'); openDlg(dlgNew); });
+        function syncNewCashCustomerLabel(){
+          var selC = document.getElementById('new_cash_customer');
+          var inC = document.getElementById('new_cash_customer_label');
+          if (!selC || !inC) return;
+          var opt = selC.options[selC.selectedIndex];
+          var hasToken = !!selC.value;
+          if (hasToken && opt) {
+            inC.value = opt.getAttribute('data-label') || opt.text || '';
+            inC.readOnly = true;
+            inC.style.background = '#f7f7f7';
+          } else {
+            inC.readOnly = false;
+            inC.style.background = '';
+          }
+        }
+
+        function syncNewCashPartnerName(){
+          var selP = document.getElementById('new_cash_partner');
+          var inP = document.getElementById('new_cash_partner_name');
+          if (!selP || !inP) return;
+          var opt = selP.options[selP.selectedIndex];
+          var hasPartner = !!selP.value;
+          if (hasPartner && opt) {
+            inP.value = opt.getAttribute('data-name') || opt.text || '';
+            inP.readOnly = true;
+            inP.style.background = '#f7f7f7';
+          } else {
+            inP.readOnly = false;
+            inP.style.background = '';
+          }
+        }
+
+        var newCashCustomerSel = document.getElementById('new_cash_customer');
+        if (newCashCustomerSel) newCashCustomerSel.addEventListener('change', syncNewCashCustomerLabel);
+        var newCashPartnerSel = document.getElementById('new_cash_partner');
+        if (newCashPartnerSel) newCashPartnerSel.addEventListener('change', syncNewCashPartnerName);
+
+        if (btnNewIncome) btnNewIncome.addEventListener('click', function(){ setNewType('income'); syncNewCashCustomerLabel(); syncNewCashPartnerName(); openDlg(dlgNew); });
+        if (btnNewExpense) btnNewExpense.addEventListener('click', function(){ setNewType('expense'); syncNewCashCustomerLabel(); syncNewCashPartnerName(); openDlg(dlgNew); });
         if (btnCloseNew) btnCloseNew.addEventListener('click', function(){ closeDlg(dlgNew); });
         if (btnCancelNew) btnCancelNew.addEventListener('click', function(){ closeDlg(dlgNew); });
 
@@ -1496,9 +1459,10 @@ app.post('/admin/cash/create', async (req, res) => {
     if (!d) return redirectAdminTo(res, '/admin/cash', 'วันที่หาย');
 
   const custTok = String(customer_token || '').trim();
-  const custLabel = String(customer_label || '').trim();
+  const normalizePartyLabel = (v) => String(v || '').trim().replace(/^\\+"|\\+"$/g, '').replace(/^"|"$/g, '').trim();
+  const custLabel = normalizePartyLabel(customer_label);
   const partnerId = partner_id ? Number(partner_id) : null;
-  const partnerName = String(partner_name || '').trim();
+  const partnerName = normalizePartyLabel(partner_name);
 
   // Validation rules:
   // - income: must have (custTok or custLabel)
@@ -1512,9 +1476,60 @@ app.post('/admin/cash/create', async (req, res) => {
 
 
   const p = await db();
+
+  let safeCustTok = custTok || null;
+  let safeCustLabel = custLabel || null;
+  let safePartnerId = partnerId || null;
+  let safePartnerName = partnerName || null;
+  if (tp === 'income') {
+    if (safeCustTok) {
+      const [custRows] = await p.execute('SELECT token,label FROM customers WHERE token=? LIMIT 1', [safeCustTok]);
+      const found = custRows[0];
+      if (!found) {
+        safeCustTok = null;
+      } else if (!safeCustLabel) {
+        safeCustLabel = found.label || null;
+      }
+    }
+    if (!safeCustTok && safeCustLabel) {
+      const [labelRows] = await p.execute('SELECT token,label FROM customers WHERE label=? LIMIT 1', [safeCustLabel]);
+      const foundByLabel = labelRows[0];
+      if (foundByLabel) {
+        safeCustTok = foundByLabel.token;
+        safeCustLabel = foundByLabel.label || safeCustLabel;
+      } else {
+        const newToken = nanoid(10);
+        await p.execute('INSERT INTO customers(token,label,note,enabled,group_id,use_group_price,default_delivery_time_id) VALUES (?,?,?,1,NULL,0,NULL)', [newToken, safeCustLabel, 'auto-created from cash entry']);
+        safeCustTok = newToken;
+      }
+    }
+  }
+  if (tp === 'expense') {
+    if (safePartnerId) {
+      const [partnerRows] = await p.execute('SELECT id,name FROM partners WHERE id=? LIMIT 1', [safePartnerId]);
+      const foundPartner = partnerRows[0];
+      if (!foundPartner) {
+        safePartnerId = null;
+      } else if (!safePartnerName) {
+        safePartnerName = foundPartner.name || null;
+      }
+    }
+    if (!safePartnerId && safePartnerName) {
+      const [nameRows] = await p.execute('SELECT id,name FROM partners WHERE name=? LIMIT 1', [safePartnerName]);
+      const foundByName = nameRows[0];
+      if (foundByName) {
+        safePartnerId = foundByName.id;
+        safePartnerName = foundByName.name || safePartnerName;
+      } else {
+        const [ins] = await p.execute('INSERT INTO partners(name,note,enabled,default_receiving_time_id) VALUES (?,?,1,NULL)', [safePartnerName, 'auto-created from cash entry']);
+        safePartnerId = ins.insertId;
+      }
+    }
+  }
+
   await p.execute(
     'INSERT INTO cash_entries(type,amount,category,note,entry_date,customer_token,customer_label,partner_id,partner_name) VALUES (?,?,?,?,?,?,?,?,?)',
-    [tp, amt, cat, nt, d, custTok || null, custLabel || null, partnerId, partnerName || null]
+    [tp, amt, cat, nt, d, safeCustTok, safeCustLabel, safePartnerId, safePartnerName]
   );
   return redirectAdminTo(res, '/admin/cash', 'บันทึกแล้ว');
 });
@@ -1535,9 +1550,10 @@ app.post('/admin/cash/update', async (req, res) => {
     if (!d) return redirectAdminTo(res, '/admin/cash', 'วันที่หาย');
 
   const custTok = String(customer_token || '').trim();
-  const custLabel = String(customer_label || '').trim();
+  const normalizePartyLabel = (v) => String(v || '').trim().replace(/^\\+"|\\+"$/g, '').replace(/^"|"$/g, '').trim();
+  const custLabel = normalizePartyLabel(customer_label);
   const partnerId = partner_id ? Number(partner_id) : null;
-  const partnerName = String(partner_name || '').trim();
+  const partnerName = normalizePartyLabel(partner_name);
 
   // Validation rules:
   // - income: must have (custTok or custLabel)
@@ -1551,9 +1567,60 @@ app.post('/admin/cash/update', async (req, res) => {
 
 
   const p = await db();
+
+  let safeCustTok = custTok || null;
+  let safeCustLabel = custLabel || null;
+  let safePartnerId = partnerId || null;
+  let safePartnerName = partnerName || null;
+  if (tp === 'income') {
+    if (safeCustTok) {
+      const [custRows] = await p.execute('SELECT token,label FROM customers WHERE token=? LIMIT 1', [safeCustTok]);
+      const found = custRows[0];
+      if (!found) {
+        safeCustTok = null;
+      } else if (!safeCustLabel) {
+        safeCustLabel = found.label || null;
+      }
+    }
+    if (!safeCustTok && safeCustLabel) {
+      const [labelRows] = await p.execute('SELECT token,label FROM customers WHERE label=? LIMIT 1', [safeCustLabel]);
+      const foundByLabel = labelRows[0];
+      if (foundByLabel) {
+        safeCustTok = foundByLabel.token;
+        safeCustLabel = foundByLabel.label || safeCustLabel;
+      } else {
+        const newToken = nanoid(10);
+        await p.execute('INSERT INTO customers(token,label,note,enabled,group_id,use_group_price,default_delivery_time_id) VALUES (?,?,?,1,NULL,0,NULL)', [newToken, safeCustLabel, 'auto-created from cash entry']);
+        safeCustTok = newToken;
+      }
+    }
+  }
+  if (tp === 'expense') {
+    if (safePartnerId) {
+      const [partnerRows] = await p.execute('SELECT id,name FROM partners WHERE id=? LIMIT 1', [safePartnerId]);
+      const foundPartner = partnerRows[0];
+      if (!foundPartner) {
+        safePartnerId = null;
+      } else if (!safePartnerName) {
+        safePartnerName = foundPartner.name || null;
+      }
+    }
+    if (!safePartnerId && safePartnerName) {
+      const [nameRows] = await p.execute('SELECT id,name FROM partners WHERE name=? LIMIT 1', [safePartnerName]);
+      const foundByName = nameRows[0];
+      if (foundByName) {
+        safePartnerId = foundByName.id;
+        safePartnerName = foundByName.name || safePartnerName;
+      } else {
+        const [ins] = await p.execute('INSERT INTO partners(name,note,enabled,default_receiving_time_id) VALUES (?,?,1,NULL)', [safePartnerName, 'auto-created from cash entry']);
+        safePartnerId = ins.insertId;
+      }
+    }
+  }
+
   await p.execute(
     'UPDATE cash_entries SET type=?, amount=?, category=?, note=?, entry_date=?, customer_token=?, customer_label=?, partner_id=?, partner_name=? WHERE id=?',
-    [tp, amt, cat, nt, d, custTok || null, custLabel || null, partnerId, partnerName || null, cid]
+    [tp, amt, cat, nt, d, safeCustTok, safeCustLabel, safePartnerId, safePartnerName, cid]
   );
   return redirectAdminTo(res, '/admin/cash', 'บันทึกแล้ว');
 });
@@ -1565,6 +1632,247 @@ app.post('/admin/cash/delete', async (req, res) => {
   const p = await db();
   await p.execute('DELETE FROM cash_entries WHERE id=?', [cid]);
   return redirectAdminTo(res, '/admin/cash', 'ลบแล้ว');
+});
+
+
+
+// --- admin plantings ---
+app.get('/admin/plantings', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  await ensurePlantingSchema();
+  const p = await db();
+  const today = bangkokYmd(new Date());
+  const t = encodeURIComponent(ADMIN_TOKEN);
+
+  const [activeRows] = await p.execute(
+    `SELECT id,crop_name,plot_name,quantity,quantity_unit,start_date,harvest_days,expected_harvest_date,expected_yield,yield_unit,status,note
+     FROM plantings
+     WHERE status='active'
+     ORDER BY expected_harvest_date ASC, id DESC`
+  );
+  const [[summary]] = await p.execute(
+    `SELECT COUNT(*) AS active_count, COALESCE(SUM(quantity),0) AS total_qty, COALESCE(SUM(expected_yield),0) AS total_yield
+     FROM plantings WHERE status='active'`
+  );
+  const [recentEvents] = await p.execute(
+    `SELECT e.id,e.planting_id,e.event_date,e.event_type,e.title,e.detail,e.amount,e.source,p.crop_name,p.plot_name
+     FROM planting_events e
+     JOIN plantings p ON p.id=e.planting_id
+     ORDER BY e.event_date DESC, e.id DESC
+     LIMIT 12`
+  );
+
+  const cards = activeRows.map(r => {
+    const start = String(r.start_date).slice(0,10);
+    const harvest = String(r.expected_harvest_date).slice(0,10);
+    const totalDays = Math.max(1, Number(r.harvest_days || daysBetweenYmd(start, harvest) || 1));
+    const elapsed = Math.max(0, daysBetweenYmd(start, today));
+    const left = daysBetweenYmd(today, harvest);
+    const pct = Math.max(0, Math.min(100, Math.round((elapsed / totalDays) * 100)));
+    const leftText = left < 0 ? `เลยกำหนด ${Math.abs(left)} วัน` : left === 0 ? 'ครบกำหนดวันนี้' : `เหลือ ${left} วัน`;
+    return `<a href="/admin/planting/${escapeHtml(r.id)}?token=${t}" class="card" style="display:block;text-decoration:none;color:#111;margin:10px 0">
+      <div class="actions" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <h3 style="margin:0 0 4px">${escapeHtml(r.crop_name)}</h3>
+          <div class="muted">${escapeHtml(r.plot_name || 'ไม่ระบุแปลง')} · เริ่ม ${escapeHtml(start)}</div>
+        </div>
+        <span class="pill" style="background:${left <= 3 ? '#b00020' : '#111'}">${escapeHtml(leftText)}</span>
+      </div>
+      <div style="height:10px"></div>
+      <div class="actions" style="justify-content:space-between">
+        <div><div class="muted">จำนวน</div><b>${Number(r.quantity||0).toLocaleString('th-TH')} ${escapeHtml(r.quantity_unit)}</b></div>
+        <div><div class="muted">คาดผลผลิต</div><b>${Number(r.expected_yield||0).toLocaleString('th-TH')} ${escapeHtml(r.yield_unit)}</b></div>
+        <div><div class="muted">เก็บเกี่ยว</div><b>${escapeHtml(harvest)}</b></div>
+      </div>
+      <div style="height:10px"></div>
+      <div style="height:10px;background:#eee;border-radius:999px;overflow:hidden"><div style="height:100%;width:${pct}%;background:#16a34a"></div></div>
+      <div class="muted" style="margin-top:6px">ความคืบหน้าโดยประมาณ ${pct}%</div>
+    </a>`;
+  }).join('') || '<div class="card"><b>ยังไม่มีรายการกำลังปลูก</b><div class="muted">กด “เพิ่มการปลูก” เพื่อเริ่มบันทึก</div></div>';
+
+  const body = `
+  <div class="card">
+    <div class="actions" style="justify-content:space-between;align-items:center">
+      <div>
+        <h2 style="margin:0">Dashboard การปลูก</h2>
+        <div class="muted">ภาพรวมว่าตอนนี้ปลูกอะไรอยู่ จำนวนเท่าไหร่ และจะเก็บเกี่ยวเมื่อไหร่</div>
+      </div>
+      <button type="button" id="btnNewPlanting">+ เพิ่มการปลูก</button>
+    </div>
+    <div style="height:12px"></div>
+    <div class="row3">
+      <div class="card" style="margin:0"><div class="muted">กำลังปลูก</div><div style="font-weight:900;font-size:24px">${Number(summary.active_count||0).toLocaleString('th-TH')}</div></div>
+      <div class="card" style="margin:0"><div class="muted">จำนวนรวม</div><div style="font-weight:900;font-size:24px">${Number(summary.total_qty||0).toLocaleString('th-TH')}</div></div>
+      <div class="card" style="margin:0"><div class="muted">คาดผลผลิตรวม</div><div style="font-weight:900;font-size:24px">${Number(summary.total_yield||0).toLocaleString('th-TH')}</div></div>
+    </div>
+  </div>
+
+  <dialog id="dlgNewPlanting" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+    <form method="post" action="/admin/planting/create?token=${t}" style="margin:0">
+      <div class="actions" style="justify-content:space-between"><h3 style="margin:0">เพิ่มการปลูก</h3><button type="button" class="secondary" id="btnCloseNewPlanting">ปิด</button></div>
+      <div style="height:12px"></div>
+      <div class="row">
+        <div><div class="muted">ปลูกอะไร</div><input name="crop_name" placeholder="เช่น ผักบุ้ง / คะน้า" required /></div>
+        <div><div class="muted">แปลง/พื้นที่</div><input name="plot_name" placeholder="เช่น แปลง A" /></div>
+      </div>
+      <div style="height:10px"></div>
+      <div class="row3">
+        <div><div class="muted">จำนวน</div><input name="quantity" type="number" step="0.01" value="0" /></div>
+        <div><div class="muted">หน่วย</div><input name="quantity_unit" value="ต้น" /></div>
+        <div><div class="muted">วันที่เริ่มปลูก</div><input name="start_date" type="date" value="${escapeHtml(today)}" required /></div>
+      </div>
+      <div style="height:10px"></div>
+      <div class="row3">
+        <div><div class="muted">ระยะเก็บเกี่ยว (วัน)</div><input name="harvest_days" type="number" value="30" required /></div>
+        <div><div class="muted">คาดผลผลิต</div><input name="expected_yield" type="number" step="0.01" value="0" /></div>
+        <div><div class="muted">หน่วยผลผลิต</div><input name="yield_unit" value="กก." /></div>
+      </div>
+      <div style="height:10px"></div>
+      <div><div class="muted">หมายเหตุ</div><textarea name="note" rows="3" placeholder="เช่น รุ่นเมล็ด, วิธีปลูก, ปัญหาที่เจอ"></textarea></div>
+      <div style="height:14px"></div>
+      <div class="actions" style="justify-content:flex-end"><button type="submit">บันทึก</button></div>
+    </form>
+  </dialog>
+
+  <div class="card"><h2 style="margin:0 0 8px">กำลังปลูกอยู่</h2>${cards}</div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px">Timeline ล่าสุด</h2>
+    ${recentEvents.map(e => `<div style="border-top:1px solid #eee;padding:10px 0">
+      <div class="actions" style="justify-content:space-between"><b>${escapeHtml(plantingEventLabel(e.event_type))}: ${escapeHtml(e.title || e.crop_name)}</b><span class="muted">${escapeHtml(String(e.event_date).slice(0,10))}</span></div>
+      <div class="muted">${escapeHtml(e.crop_name)}${e.plot_name ? ' · ' + escapeHtml(e.plot_name) : ''}${e.amount ? ' · ' + escapeHtml(e.amount) : ''}${e.source === 'weather-api' ? ' · API กรมอุตุฯ' : ''}</div>
+      ${e.detail ? `<div>${escapeHtml(e.detail)}</div>` : ''}
+    </div>`).join('') || '<div class="muted">ยังไม่มี timeline</div>'}
+    <div class="muted" style="margin-top:10px">หมายเหตุ: เวอร์ชันแรกยังบันทึกฝนแบบ manual ก่อน จุดต่อ API กรมอุตุฯ เตรียมไว้แล้วในชนิดรายการ “ฝนตก”</div>
+  </div>
+
+  <script>
+    (function(){
+      var d=document.getElementById('dlgNewPlanting');
+      var b=document.getElementById('btnNewPlanting');
+      var c=document.getElementById('btnCloseNewPlanting');
+      function open(){ if(d && d.showModal) d.showModal(); else if(d) d.setAttribute('open','open'); }
+      function close(){ if(d && d.close) d.close(); else if(d) d.removeAttribute('open'); }
+      if(b) b.addEventListener('click', open);
+      if(c) c.addEventListener('click', close);
+    })();
+  </script>`;
+
+  res.type('html').send(adminLayout({ title: 'การปลูก', active: 'plantings', msg: req.query.msg ? String(req.query.msg) : '', body }));
+});
+
+app.post('/admin/planting/create', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  await ensurePlantingSchema();
+  const crop = String((req.body && req.body.crop_name) || '').trim();
+  const plot = String((req.body && req.body.plot_name) || '').trim();
+  const qty = Number((req.body && req.body.quantity) || 0);
+  const qtyUnit = String((req.body && req.body.quantity_unit) || 'ต้น').trim() || 'ต้น';
+  const start = String((req.body && req.body.start_date) || '').slice(0,10);
+  const harvestDays = Math.max(1, Math.min(1000, Number((req.body && req.body.harvest_days) || 30)));
+  const expectedYield = Number((req.body && req.body.expected_yield) || 0);
+  const yieldUnit = String((req.body && req.body.yield_unit) || 'กก.').trim() || 'กก.';
+  const note = String((req.body && req.body.note) || '').trim();
+  if (!crop) return redirectAdminTo(res, '/admin/plantings', 'กรุณาระบุว่าปลูกอะไร');
+  if (!start) return redirectAdminTo(res, '/admin/plantings', 'กรุณาระบุวันที่เริ่มปลูก');
+  const expectedHarvest = addDaysYmd(start, harvestDays);
+  const p = await db();
+  const [ins] = await p.execute(
+    `INSERT INTO plantings(crop_name,plot_name,quantity,quantity_unit,start_date,harvest_days,expected_harvest_date,expected_yield,yield_unit,status,note)
+     VALUES (?,?,?,?,?,?,?,?,?,'active',?)`,
+    [crop, plot, Number.isFinite(qty) ? qty : 0, qtyUnit, start, harvestDays, expectedHarvest, Number.isFinite(expectedYield) ? expectedYield : 0, yieldUnit, note]
+  );
+  await p.execute(
+    `INSERT INTO planting_events(planting_id,event_date,event_type,title,detail,amount,source) VALUES (?,?,?,?,?,?,?)`,
+    [ins.insertId, start, 'start', 'เริ่มปลูก', note, `${Number.isFinite(qty) ? qty : 0} ${qtyUnit}`, 'manual']
+  );
+  return redirectAdminTo(res, '/admin/plantings', 'เพิ่มการปลูกแล้ว');
+});
+
+app.get('/admin/planting/:id', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  await ensurePlantingSchema();
+  const id = Number(req.params.id || 0);
+  const p = await db();
+  const [rows] = await p.execute('SELECT * FROM plantings WHERE id=? LIMIT 1', [id]);
+  const plant = rows[0];
+  if (!plant) return res.status(404).type('html').send('ไม่พบรายการปลูก');
+  const [events] = await p.execute('SELECT * FROM planting_events WHERE planting_id=? ORDER BY event_date DESC, id DESC', [id]);
+  const t = encodeURIComponent(ADMIN_TOKEN);
+  const today = bangkokYmd(new Date());
+  const start = String(plant.start_date).slice(0,10);
+  const harvest = String(plant.expected_harvest_date).slice(0,10);
+  const elapsed = Math.max(0, daysBetweenYmd(start, today));
+  const left = daysBetweenYmd(today, harvest);
+  const pct = Math.max(0, Math.min(100, Math.round((elapsed / Math.max(1, Number(plant.harvest_days||1))) * 100)));
+
+  const body = `
+  <div class="card">
+    <div class="actions" style="justify-content:space-between;align-items:flex-start">
+      <div>
+        <h2 style="margin:0">${escapeHtml(plant.crop_name)}</h2>
+        <div class="muted">${escapeHtml(plant.plot_name || 'ไม่ระบุแปลง')} · ${escapeHtml(plantingStatusLabel(plant.status))}</div>
+      </div>
+      <a class="muted" href="/admin/plantings?token=${t}" style="text-decoration:none">← กลับ dashboard</a>
+    </div>
+    <div style="height:12px"></div>
+    <div class="row3">
+      <div><div class="muted">จำนวน</div><b>${Number(plant.quantity||0).toLocaleString('th-TH')} ${escapeHtml(plant.quantity_unit)}</b></div>
+      <div><div class="muted">เริ่มปลูก</div><b>${escapeHtml(start)}</b></div>
+      <div><div class="muted">คาดเก็บเกี่ยว</div><b>${escapeHtml(harvest)}</b></div>
+    </div>
+    <div style="height:10px"></div>
+    <div style="height:10px;background:#eee;border-radius:999px;overflow:hidden"><div style="height:100%;width:${pct}%;background:#16a34a"></div></div>
+    <div class="muted" style="margin-top:6px">${left < 0 ? `เลยกำหนด ${Math.abs(left)} วัน` : left === 0 ? 'ครบกำหนดวันนี้' : `เหลือ ${left} วัน`} · คาดผลผลิต ${Number(plant.expected_yield||0).toLocaleString('th-TH')} ${escapeHtml(plant.yield_unit)}</div>
+    ${plant.note ? `<div class="card"><b>หมายเหตุ</b><br>${escapeHtml(plant.note)}</div>` : ''}
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 8px">เพิ่ม timeline</h3>
+    <form method="post" action="/admin/planting/event/create?token=${t}" style="margin:0">
+      <input type="hidden" name="planting_id" value="${escapeHtml(id)}" />
+      <div class="row3">
+        <div><div class="muted">วันที่</div><input name="event_date" type="date" value="${escapeHtml(today)}" required /></div>
+        <div><div class="muted">ประเภท</div><select name="event_type"><option value="fertilizer">ใส่ปุ๋ย</option><option value="pesticide">ใส่ยา</option><option value="rain">ฝนตก</option><option value="note">บันทึก</option><option value="harvest">เก็บเกี่ยว</option></select></div></div>
+        <div><div class="muted">ปริมาณ/ค่า</div><input name="amount" placeholder="เช่น 15-15-15 2 กก. / ฝน 20 มม." /></div>
+      </div>
+      <div style="height:10px"></div>
+      <div class="row">
+        <div><div class="muted">หัวข้อ</div><input name="title" placeholder="เช่น ใส่ปุ๋ยรอบแรก" /></div>
+        <div><div class="muted">รายละเอียด</div><input name="detail" placeholder="รายละเอียดเพิ่มเติม" /></div>
+      </div>
+      <div style="height:12px"></div>
+      <div class="actions" style="justify-content:flex-end"><button type="submit">บันทึก timeline</button></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 8px">Timeline</h3>
+    ${events.map(e => `<div style="border-top:1px solid #eee;padding:12px 0">
+      <div class="actions" style="justify-content:space-between"><b>${escapeHtml(plantingEventLabel(e.event_type))}: ${escapeHtml(e.title || '')}</b><span class="muted">${escapeHtml(String(e.event_date).slice(0,10))}</span></div>
+      ${e.amount ? `<div class="muted">${escapeHtml(e.amount)}${e.source === 'weather-api' ? ' · API กรมอุตุฯ' : ''}</div>` : ''}
+      ${e.detail ? `<div>${escapeHtml(e.detail)}</div>` : ''}
+    </div>`).join('') || '<div class="muted">ยังไม่มีรายการ</div>'}
+  </div>`;
+
+  res.type('html').send(adminLayout({ title: 'รายละเอียดการปลูก', active: 'plantings', msg: req.query.msg ? String(req.query.msg) : '', body }));
+});
+
+app.post('/admin/planting/event/create', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  await ensurePlantingSchema();
+  const id = Number((req.body && req.body.planting_id) || 0);
+  const date = String((req.body && req.body.event_date) || '').slice(0,10);
+  const type = ['fertilizer','pesticide','rain','note','harvest'].includes(String(req.body && req.body.event_type)) ? String(req.body.event_type) : 'note';
+  const title = String((req.body && req.body.title) || plantingEventLabel(type)).trim() || plantingEventLabel(type);
+  const detail = String((req.body && req.body.detail) || '').trim();
+  const amount = String((req.body && req.body.amount) || '').trim();
+  if (!id) return redirectAdminTo(res, '/admin/plantings', 'id หาย');
+  if (!date) return redirectAdminTo(res, `/admin/planting/${id}`, 'วันที่หาย');
+  const p = await db();
+  await p.execute('INSERT INTO planting_events(planting_id,event_date,event_type,title,detail,amount,source) VALUES (?,?,?,?,?,?,?)', [id, date, type, title, detail, amount, 'manual']);
+  if (type === 'harvest') await p.execute("UPDATE plantings SET status='harvested' WHERE id=?", [id]);
+  return redirectAdminTo(res, `/admin/planting/${id}`, 'บันทึก timeline แล้ว');
 });
 
 
