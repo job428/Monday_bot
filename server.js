@@ -362,6 +362,37 @@ function timelineEventCard(e, { showCrop = false } = {}) {
   </div>`;
 }
 
+function plantingDateLine(startYmd, harvestYmd, todayYmd) {
+  const start = bangkokYmd(startYmd);
+  const harvest = bangkokYmd(harvestYmd);
+  const today = bangkokYmd(todayYmd || new Date());
+  const totalDays = Math.max(1, daysBetweenYmd(start, harvest));
+  const elapsed = Math.max(0, Math.min(totalDays, daysBetweenYmd(start, today)));
+  const pct = Math.max(0, Math.min(100, Math.round((elapsed / totalDays) * 100)));
+  const ticks = [];
+  for (let i = 0; i < 7; i++) {
+    const d = addDaysYmd(start, i);
+    const day = Number(d.slice(8, 10));
+    ticks.push(`<div style="min-width:42px;text-align:center;position:relative;z-index:1">
+      <div style="width:12px;height:12px;margin:0 auto 4px;border-radius:50%;background:${d === today ? '#111' : '#fff'};border:2px solid ${d === today ? '#111' : '#16a34a'}"></div>
+      <div style="font-weight:900;font-size:13px;color:${d === today ? '#111' : '#444'}">${day}</div>
+      <div class="muted" style="font-size:10px">${escapeHtml(thaiDateBrief(d).split(' ')[0] || '')}</div>
+    </div>`);
+  }
+  return `<div style="margin-top:10px">
+    <div class="actions" style="justify-content:space-between;margin-bottom:6px">
+      <span class="muted">เส้นวันที่</span>
+      <span class="muted">${escapeHtml(start)} → ${escapeHtml(harvest)}</span>
+    </div>
+    <div style="position:relative;overflow-x:auto;padding:4px 0 2px;-webkit-overflow-scrolling:touch">
+      <div style="position:absolute;left:21px;right:21px;top:13px;height:4px;background:#e5e7eb;border-radius:999px"></div>
+      <div style="position:absolute;left:21px;top:13px;height:4px;width:calc((100% - 42px) * ${pct / 100});background:#16a34a;border-radius:999px"></div>
+      <div style="display:flex;justify-content:space-between;gap:10px;min-width:330px">${ticks.join('')}</div>
+    </div>
+    <div class="muted" style="margin-top:4px">ผ่านไป ${elapsed}/${totalDays} วัน · ${pct}%</div>
+  </div>`;
+}
+
 async function resolvePlotIdsFromText(p, text) {
   const names = String(text || '').split(',').map(x => x.trim()).filter(Boolean);
   if (!names.length) return [];
@@ -2031,9 +2062,7 @@ app.get('/admin/plantings', async (req, res) => {
         <div><div class="muted">คาดผลผลิต</div><b>${Number(r.expected_yield||0).toLocaleString('th-TH')} ${escapeHtml(r.yield_unit)}</b></div>
         <div><div class="muted">เก็บเกี่ยว</div><b>${escapeHtml(harvest)}</b></div>
       </div>
-      <div style="height:10px"></div>
-      <div style="height:10px;background:#eee;border-radius:999px;overflow:hidden"><div style="height:100%;width:${pct}%;background:#16a34a"></div></div>
-      <div class="muted" style="margin-top:6px">ความคืบหน้าโดยประมาณ ${pct}%</div>
+      ${plantingDateLine(start, harvest, today)}
     </a>`;
   }).join('') || '<div class="card"><b>ยังไม่มีรายการกำลังปลูก</b><div class="muted">กด “เพิ่มการปลูก” เพื่อเริ่มบันทึก</div></div>';
 
@@ -2293,8 +2322,7 @@ app.get('/admin/planting/:id', async (req, res) => {
       <div><div class="muted">เริ่มปลูก</div><b>${escapeHtml(start)}</b></div>
       <div><div class="muted">คาดเก็บเกี่ยว</div><b>${escapeHtml(harvest)}</b></div>
     </div>
-    <div style="height:10px"></div>
-    <div style="height:10px;background:#eee;border-radius:999px;overflow:hidden"><div style="height:100%;width:${pct}%;background:#16a34a"></div></div>
+    ${plantingDateLine(start, harvest, today)}
     <div class="muted" style="margin-top:6px">${left < 0 ? `เลยกำหนด ${Math.abs(left)} วัน` : left === 0 ? 'ครบกำหนดวันนี้' : `เหลือ ${left} วัน`} · คาดผลผลิต ${Number(plant.expected_yield||0).toLocaleString('th-TH')} ${escapeHtml(plant.yield_unit)}</div>
     ${plant.note ? `<div class="card"><b>หมายเหตุ</b><br>${escapeHtml(plant.note)}</div>` : ''}
   </div>
