@@ -337,7 +337,6 @@ function adminNav(active) {
     ${link('/admin/delivery-times', 'เวลาส่ง', 'delivery')}
     ${link('/admin/cash', 'รายรับรายจ่าย', 'cash')}
     ${link('/admin/plantings', 'การปลูก', 'plantings')}
-    ${link('/admin/plot-map', 'แผนที่แปลง', 'plot-map')}
     ${link('/admin/partners', 'พาร์ทเนอร์', 'partners')}
   </div>`;
 }
@@ -1903,7 +1902,10 @@ app.get('/admin/plantings', async (req, res) => {
         <h2 style="margin:0">ภาพรวมการปลูก</h2>
         <div class="muted">ภาพรวมว่าตอนนี้ปลูกอะไรอยู่ จำนวนเท่าไหร่ และจะเก็บเกี่ยวเมื่อไหร่</div>
       </div>
-      <button type="button" id="btnNewPlanting">+ เพิ่มการปลูก</button>
+      <div class="actions" style="justify-content:flex-end">
+        <a class="pill" href="/admin/plot-map?token=${t}" style="text-decoration:none">แผนที่แปลง</a>
+        <button type="button" id="btnNewPlanting">+ เพิ่มการปลูก</button>
+      </div>
     </div>
     <div style="height:12px"></div>
     <div class="row3">
