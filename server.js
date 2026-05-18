@@ -1661,6 +1661,10 @@ app.get('/admin/plantings', async (req, res) => {
      ORDER BY e.event_date DESC, e.id DESC
      LIMIT 12`
   );
+  const [cropOptions] = await p.execute(
+    `SELECT id,name,unit FROM veggies WHERE enabled=1 ORDER BY sort_order ASC, name ASC`
+  );
+  const cropOptionsJson = JSON.stringify(cropOptions.map(v => ({ id: v.id, name: v.name, unit: v.unit || '' }))).replace(/</g, '\\u003c');
 
   const cards = activeRows.map(r => {
     const start = String(r.start_date).slice(0,10);
@@ -1712,7 +1716,14 @@ app.get('/admin/plantings', async (req, res) => {
       <div class="actions" style="justify-content:space-between"><h3 style="margin:0">เพิ่มการปลูก</h3><button type="button" class="secondary" id="btnCloseNewPlanting">ปิด</button></div>
       <div style="height:12px"></div>
       <div class="row">
-        <div><div class="muted">ปลูกอะไร</div><input name="crop_name" placeholder="เช่น ผักบุ้ง / คะน้า" required /></div>
+        <div>
+          <div class="muted">ปลูกอะไร</div>
+          <div class="actions" style="gap:6px;align-items:stretch;flex-wrap:nowrap">
+            <input id="cropNameInput" name="crop_name" placeholder="ค้น/เลือกจากสินค้า หรือพิมพ์เอง" required style="min-width:0" />
+            <button type="button" class="secondary" id="btnCropSearch" style="white-space:nowrap">ค้นหา</button>
+          </div>
+          <div class="muted" id="cropPickHint">ดึงจากเมนูผัก/สินค้าเดิม</div>
+        </div>
         <div><div class="muted">แปลง/พื้นที่</div><input name="plot_name" placeholder="เช่น แปลง A" /></div>
       </div>
       <div style="height:10px"></div>
@@ -1746,15 +1757,55 @@ app.get('/admin/plantings', async (req, res) => {
     <div class="muted" style="margin-top:10px">หมายเหตุ: เวอร์ชันแรกยังบันทึกฝนแบบ manual ก่อน จุดต่อ API กรมอุตุฯ เตรียมไว้แล้วในชนิดรายการ “ฝนตก”</div>
   </div>
 
+  <dialog id="dlgCropSearch" style="border:1px solid #ddd;border-radius:14px;max-width:720px;width:95%">
+    <div class="actions" style="justify-content:space-between;align-items:center">
+      <h3 style="margin:0">ค้นหาจากสินค้า</h3>
+      <button type="button" class="secondary" id="btnCloseCropSearch">ปิด</button>
+    </div>
+    <div style="height:12px"></div>
+    <input id="cropSearchInput" placeholder="พิมพ์ชื่อผัก เช่น คะน้า / กระเทียม" />
+    <div id="cropSearchList" class="card" style="max-height:55vh;overflow:auto;padding:0"></div>
+  </dialog>
+
   <script>
     (function(){
+      var crops = ${cropOptionsJson};
       var d=document.getElementById('dlgNewPlanting');
       var b=document.getElementById('btnNewPlanting');
       var c=document.getElementById('btnCloseNewPlanting');
+      var cropDialog=document.getElementById('dlgCropSearch');
+      var cropBtn=document.getElementById('btnCropSearch');
+      var cropClose=document.getElementById('btnCloseCropSearch');
+      var cropSearch=document.getElementById('cropSearchInput');
+      var cropList=document.getElementById('cropSearchList');
+      var cropName=document.getElementById('cropNameInput');
+      var qtyUnit=document.querySelector('input[name="quantity_unit"]');
       function open(){ if(d && d.showModal) d.showModal(); else if(d) d.setAttribute('open','open'); }
       function close(){ if(d && d.close) d.close(); else if(d) d.removeAttribute('open'); }
+      function openCrop(){ renderCrops(''); if(cropDialog && cropDialog.showModal) cropDialog.showModal(); else if(cropDialog) cropDialog.setAttribute('open','open'); setTimeout(function(){ if(cropSearch) cropSearch.focus(); }, 50); }
+      function closeCrop(){ if(cropDialog && cropDialog.close) cropDialog.close(); else if(cropDialog) cropDialog.removeAttribute('open'); }
+      function renderCrops(q){
+        if(!cropList) return;
+        var needle=String(q||'').trim().toLowerCase();
+        var rows=crops.filter(function(v){ return !needle || String(v.name).toLowerCase().indexOf(needle)>=0 || String(v.id).toLowerCase().indexOf(needle)>=0; }).slice(0,80);
+        cropList.innerHTML = rows.length ? rows.map(function(v){
+          return '<button type="button" class="secondary cropPick" data-name="'+escapeAttr(v.name)+'" data-unit="'+escapeAttr(v.unit||'')+'" style="width:100%;text-align:left;border:none;border-bottom:1px solid #eee;border-radius:0;padding:13px 14px"><b>'+escapeHtmlClient(v.name)+'</b>'+(v.unit ? '<div class="muted">หน่วยสินค้า: '+escapeHtmlClient(v.unit)+'</div>' : '')+'</button>';
+        }).join('') : '<div style="padding:14px" class="muted">ไม่พบสินค้า — พิมพ์ชื่อเองในช่องปลูกอะไรได้</div>';
+      }
+      function escapeHtmlClient(s){ return String(s||'').replace(/[&<>"]/g,function(ch){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]); }); }
+      function escapeAttr(s){ return escapeHtmlClient(s).replace(/'/g,'&#039;'); }
       if(b) b.addEventListener('click', open);
       if(c) c.addEventListener('click', close);
+      if(cropBtn) cropBtn.addEventListener('click', openCrop);
+      if(cropClose) cropClose.addEventListener('click', closeCrop);
+      if(cropSearch) cropSearch.addEventListener('input', function(){ renderCrops(cropSearch.value); });
+      if(cropList) cropList.addEventListener('click', function(ev){
+        var btn=ev.target.closest ? ev.target.closest('.cropPick') : null;
+        if(!btn) return;
+        if(cropName) cropName.value = btn.getAttribute('data-name') || '';
+        if(qtyUnit && btn.getAttribute('data-unit')) qtyUnit.value = btn.getAttribute('data-unit');
+        closeCrop();
+      });
     })();
   </script>`;
 
