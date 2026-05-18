@@ -1710,7 +1710,19 @@ app.get('/admin/plot-map', async (req, res) => {
       </div>
       <a class="pill" href="/admin/plantings?token=${t}" style="text-decoration:none">ไปหน้า การปลูก</a>
     </div>
-    <div id="farmMap" style="position:relative;height:min(70vh,620px);min-height:420px;margin-top:12px;border-radius:18px;border:1px solid #c8d2c4;overflow:hidden;background:linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(135deg,#d9f99d,#86efac);background-size:40px 40px,40px 40px,100% 100%;touch-action:none"></div>
+    <div class="actions" style="justify-content:space-between;margin-top:12px;gap:8px">
+      <div class="muted">มือถือ: ใช้ปุ่มซูม แล้วเลื่อนดูแผนที่ได้</div>
+      <div class="actions" style="gap:6px">
+        <button type="button" class="secondary" id="zoomOut">−</button>
+        <button type="button" class="secondary" id="zoomFit">พอดีจอ</button>
+        <button type="button" class="secondary" id="zoomIn">+</button>
+      </div>
+    </div>
+    <div id="farmViewport" style="height:min(62vh,620px);min-height:360px;margin-top:8px;border-radius:18px;border:1px solid #c8d2c4;overflow:auto;background:#d9f99d;-webkit-overflow-scrolling:touch;overscroll-behavior:contain">
+      <div id="farmStage" style="position:relative;width:1000px;height:620px">
+        <div id="farmMap" style="position:absolute;left:0;top:0;width:1000px;height:620px;transform-origin:0 0;border-radius:18px;overflow:hidden;background:linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(135deg,#d9f99d,#86efac);background-size:40px 40px,40px 40px,100% 100%;touch-action:none"></div>
+      </div>
+    </div>
     <div class="muted" id="saveState" style="margin-top:8px">พร้อมแก้ไข</div>
   </div>
 
@@ -1738,6 +1750,9 @@ app.get('/admin/plot-map', async (req, res) => {
     (function(){
       var token=${JSON.stringify(ADMIN_TOKEN)};
       var plots=${plotsJson};
+      var baseW=1000, baseH=620, zoom=1;
+      var viewport=document.getElementById('farmViewport');
+      var stage=document.getElementById('farmStage');
       var map=document.getElementById('farmMap');
       var saveState=document.getElementById('saveState');
       function esc(s){return String(s||'').replace(/[&<>\"]/g,function(ch){return ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[ch]);});}
@@ -1747,10 +1762,29 @@ app.get('/admin/plot-map', async (req, res) => {
         plots.forEach(function(p){
           var el=document.createElement('div');
           el.className='plotBox'; el.dataset.id=p.id;
-          el.style.cssText='position:absolute;left:'+p.x+'%;top:'+p.y+'%;width:'+p.w+'%;height:'+p.h+'%;background:'+p.color+'cc;border:2px solid rgba(0,0,0,.35);border-radius:12px;box-shadow:0 8px 18px rgba(0,0,0,.16);color:#07220f;padding:9px;font-weight:900;cursor:move;user-select:none;overflow:hidden';
-          el.innerHTML='<div>'+esc(p.name)+'</div><div style="font-weight:600;font-size:12px">'+esc(p.area_label||'')+'</div>'+(p.crops?'<div style="font-weight:700;font-size:12px;margin-top:4px;background:rgba(255,255,255,.6);border-radius:8px;padding:3px 5px">ปลูก: '+esc(p.crops)+'</div>':'')+'<div class="resize" style="position:absolute;right:0;bottom:0;width:26px;height:26px;background:rgba(0,0,0,.25);clip-path:polygon(100% 0,0 100%,100% 100%);cursor:nwse-resize"></div>';
+          el.style.cssText='position:absolute;left:'+p.x+'%;top:'+p.y+'%;width:'+p.w+'%;height:'+p.h+'%;background:'+p.color+'cc;border:2px solid rgba(0,0,0,.35);border-radius:10px;box-shadow:0 6px 14px rgba(0,0,0,.14);color:#07220f;padding:7px;font-weight:900;font-size:13px;line-height:1.15;cursor:move;user-select:none;overflow:hidden';
+          el.innerHTML='<div>'+esc(p.name)+'</div><div style="font-weight:600;font-size:10px">'+esc(p.area_label||'')+'</div>'+(p.crops?'<div style="font-weight:700;font-size:10px;margin-top:3px;background:rgba(255,255,255,.6);border-radius:8px;padding:2px 4px">ปลูก: '+esc(p.crops)+'</div>':'')+'<div class="resize" style="position:absolute;right:0;bottom:0;width:24px;height:24px;background:rgba(0,0,0,.25);clip-path:polygon(100% 0,0 100%,100% 100%);cursor:nwse-resize"></div>';
           map.appendChild(el);
         });
+      }
+      function applyZoom(next, keepCenter){
+        var old=zoom;
+        zoom=clamp(next,0.45,1.8);
+        var cx=viewport ? (viewport.scrollLeft + viewport.clientWidth/2) / old : baseW/2;
+        var cy=viewport ? (viewport.scrollTop + viewport.clientHeight/2) / old : baseH/2;
+        stage.style.width=(baseW*zoom)+'px';
+        stage.style.height=(baseH*zoom)+'px';
+        map.style.transform='scale('+zoom+')';
+        if(viewport && keepCenter){
+          viewport.scrollLeft = cx*zoom - viewport.clientWidth/2;
+          viewport.scrollTop = cy*zoom - viewport.clientHeight/2;
+        }
+        if(saveState) saveState.textContent='ซูม '+Math.round(zoom*100)+'%';
+      }
+      function fitZoom(){
+        var z=viewport ? Math.min(1, Math.max(0.45, (viewport.clientWidth-12)/baseW)) : 1;
+        applyZoom(z,false);
+        if(viewport){ viewport.scrollLeft=0; viewport.scrollTop=0; }
       }
       var drag=null, timer=null;
       map.addEventListener('pointerdown',function(ev){
@@ -1779,7 +1813,13 @@ app.get('/admin/plot-map', async (req, res) => {
             .catch(function(){ if(saveState) saveState.textContent='บันทึกไม่สำเร็จ ลองรีเฟรช'; });
         },120);
       }
+      var zin=document.getElementById('zoomIn'), zout=document.getElementById('zoomOut'), zfit=document.getElementById('zoomFit');
+      if(zin) zin.addEventListener('click',function(){ applyZoom(zoom+0.15,true); });
+      if(zout) zout.addEventListener('click',function(){ applyZoom(zoom-0.15,true); });
+      if(zfit) zfit.addEventListener('click',fitZoom);
+      window.addEventListener('resize',function(){ if(window.innerWidth < 720) fitZoom(); });
       draw();
+      if(window.innerWidth < 720) fitZoom(); else applyZoom(1,false);
     })();
   </script>`;
   res.type('html').send(adminLayout({ title: 'แผนที่แปลง', active: 'plot-map', msg: req.query.msg ? String(req.query.msg) : '', body }));
