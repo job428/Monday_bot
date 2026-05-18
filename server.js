@@ -88,7 +88,7 @@ function redirectAdminTo(res, path, msg) {
 function requireAdmin(req, res) {
   const t = String(req.query.token || '');
   if (t !== String(ADMIN_TOKEN)) {
-    res.status(401).type('html').send('Unauthorized');
+    res.status(401).type('html').send('ไม่มีสิทธิ์เข้าใช้งาน');
     return false;
   }
   return true;
@@ -699,7 +699,7 @@ app.get('/game', async (req, res) => {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Veg Shop (Prototype)</title>
+  <title>เกมร้านผัก (ต้นแบบ)</title>
   <style>
     html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0b0f14;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto}
     body{position:fixed;inset:0}
@@ -723,14 +723,14 @@ app.get('/game', async (req, res) => {
     <div class="top">
       <div>
         <div style="font-weight:900;font-size:18px">ร้านขายผัก (ห้องเปล่า ๆ)</div>
-        <div class="hint">Prototype: แนวตั้งเต็มจอ · ลากเพื่อเลื่อนมุมมอง · ถ่าง/หุบเพื่อซูม</div>
+        <div class="hint">ต้นแบบ: แนวตั้งเต็มจอ · ลากเพื่อเลื่อนมุมมอง · ถ่าง/หุบเพื่อซูม</div>
       </div>
       <div class="hint" style="display:flex;gap:10px;align-items:center">
         <button id="btnRefresh" type="button" style="padding:8px 10px;border-radius:10px;border:1px solid #2a3a52;background:#111;color:#fff;font-weight:800">รีเฟรช</button>
         <a href="/admin?token=${escapeHtml(ADMIN_TOKEN)}">กลับหน้าแอดมิน</a>
       </div>
     </div>
-    <div id="game"><div id="stage"></div><div id="debugHud">loading...</div><div id="err"></div></div>
+    <div id="game"><div id="stage"></div><div id="debugHud">กำลังโหลด...</div><div id="err"></div></div>
   </div>
   <script src="/vendor/veg-game.js"></script>
 </body>
@@ -744,7 +744,7 @@ app.get('/world-sim', async (req, res) => {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>World Sim</title>
+  <title>จำลองโลก</title>
   <style>
     :root{--bg:#081019;--panel:#101826;--panel2:#172233;--line:#26354a;--ink:#eef4ff;--muted:#92a2bb;--green:#8df0a9;--red:#ff8a8a;--yellow:#ffd369}
     *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at top,#102033,#071019 60%);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
@@ -756,7 +756,7 @@ app.get('/world-sim', async (req, res) => {
 <div class="wrap">
   <div class="card top">
     <div>
-      <div style="font-size:28px;font-weight:900">World Sim</div>
+      <div style="font-size:28px;font-weight:900">จำลองโลก</div>
       <div class="muted">เกมจำลองโลกแบบตัวหนังสือ · นายคือผู้แทรกแซงโลก</div>
     </div>
     <div class="top" style="gap:8px">
@@ -1900,7 +1900,7 @@ app.get('/admin/plantings', async (req, res) => {
   <div class="card">
     <div class="actions" style="justify-content:space-between;align-items:center">
       <div>
-        <h2 style="margin:0">Dashboard การปลูก</h2>
+        <h2 style="margin:0">ภาพรวมการปลูก</h2>
         <div class="muted">ภาพรวมว่าตอนนี้ปลูกอะไรอยู่ จำนวนเท่าไหร่ และจะเก็บเกี่ยวเมื่อไหร่</div>
       </div>
       <button type="button" id="btnNewPlanting">+ เพิ่มการปลูก</button>
@@ -1955,13 +1955,13 @@ app.get('/admin/plantings', async (req, res) => {
   <div class="card"><h2 style="margin:0 0 8px">กำลังปลูกอยู่</h2>${cards}</div>
 
   <div class="card">
-    <h2 style="margin:0 0 8px">Timeline ล่าสุด</h2>
+    <h2 style="margin:0 0 8px">ไทม์ไลน์ล่าสุด</h2>
     ${recentEvents.map(e => `<div style="border-top:1px solid #eee;padding:10px 0">
       <div class="actions" style="justify-content:space-between"><b>${escapeHtml(plantingEventLabel(e.event_type))}: ${escapeHtml(e.title || e.crop_name)}</b><span class="muted">${escapeHtml(String(e.event_date).slice(0,10))}</span></div>
       <div class="muted">${escapeHtml(e.crop_name)}${e.plot_name ? ' · ' + escapeHtml(e.plot_name) : ''}${e.amount ? ' · ' + escapeHtml(e.amount) : ''}${e.source === 'weather-api' ? ' · API กรมอุตุฯ' : ''}</div>
       ${e.detail ? `<div>${escapeHtml(e.detail)}</div>` : ''}
     </div>`).join('') || '<div class="muted">ยังไม่มี timeline</div>'}
-    <div class="muted" style="margin-top:10px">หมายเหตุ: เวอร์ชันแรกยังบันทึกฝนแบบ manual ก่อน จุดต่อ API กรมอุตุฯ เตรียมไว้แล้วในชนิดรายการ “ฝนตก”</div>
+    <div class="muted" style="margin-top:10px">หมายเหตุ: เวอร์ชันแรกยังบันทึกฝนแบบกรอกเองก่อน จุดต่อ API กรมอุตุฯ เตรียมไว้แล้วในชนิดรายการ “ฝนตก”</div>
   </div>
 
   <dialog id="dlgPlotPick" style="border:1px solid #ddd;border-radius:14px;max-width:860px;width:96%">
@@ -2156,7 +2156,7 @@ app.get('/admin/planting/:id', async (req, res) => {
   </div>
 
   <div class="card">
-    <h3 style="margin:0 0 8px">เพิ่ม timeline</h3>
+    <h3 style="margin:0 0 8px">เพิ่มไทม์ไลน์</h3>
     <form method="post" action="/admin/planting/event/create?token=${t}" style="margin:0">
       <input type="hidden" name="planting_id" value="${escapeHtml(id)}" />
       <div class="row3">
@@ -2170,12 +2170,12 @@ app.get('/admin/planting/:id', async (req, res) => {
         <div><div class="muted">รายละเอียด</div><input name="detail" placeholder="รายละเอียดเพิ่มเติม" /></div>
       </div>
       <div style="height:12px"></div>
-      <div class="actions" style="justify-content:flex-end"><button type="submit">บันทึก timeline</button></div>
+      <div class="actions" style="justify-content:flex-end"><button type="submit">บันทึกไทม์ไลน์</button></div>
     </form>
   </div>
 
   <div class="card">
-    <h3 style="margin:0 0 8px">Timeline</h3>
+    <h3 style="margin:0 0 8px">ไทม์ไลน์</h3>
     ${events.map(e => `<div style="border-top:1px solid #eee;padding:12px 0">
       <div class="actions" style="justify-content:space-between"><b>${escapeHtml(plantingEventLabel(e.event_type))}: ${escapeHtml(e.title || '')}</b><span class="muted">${escapeHtml(String(e.event_date).slice(0,10))}</span></div>
       ${e.amount ? `<div class="muted">${escapeHtml(e.amount)}${e.source === 'weather-api' ? ' · API กรมอุตุฯ' : ''}</div>` : ''}
@@ -2200,7 +2200,7 @@ app.post('/admin/planting/event/create', async (req, res) => {
   const p = await db();
   await p.execute('INSERT INTO planting_events(planting_id,event_date,event_type,title,detail,amount,source) VALUES (?,?,?,?,?,?,?)', [id, date, type, title, detail, amount, 'manual']);
   if (type === 'harvest') await p.execute("UPDATE plantings SET status='harvested' WHERE id=?", [id]);
-  return redirectAdminTo(res, `/admin/planting/${id}`, 'บันทึก timeline แล้ว');
+  return redirectAdminTo(res, `/admin/planting/${id}`, 'บันทึกไทม์ไลน์แล้ว');
 });
 
 
